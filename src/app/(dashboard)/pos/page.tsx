@@ -79,7 +79,7 @@ export default function POSPage() {
 
   const total = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
   const requiresDoc = total >= ARCA_LIMIT;
-  const isCashInsufficient = paymentMethod === 'CASH' && cashReceived !== '' && parseFloat(cashReceived) < total;
+  const isCashInsufficient = paymentMethod === 'CASH' && (cashReceived === '' || parseFloat(cashReceived) < total);
   const canConfirm = cart.length > 0 && paymentMethod && (!requiresDoc || customerDoc.length >= 7) && !isCashInsufficient;
 
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
@@ -110,6 +110,7 @@ export default function POSPage() {
   const [activeWeightProduct, setActiveWeightProduct] = useState<Product | null>(null);
   const [tempWeight, setTempWeight] = useState<number>(0);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
+  const [isRegisteringMovement, setIsRegisteringMovement] = useState(false);
 
   const { connected: scaleConnected, error: scaleError, weight: scaleWeight, connectScale, disconnectScale } = useSerialScale((w) => {
     if (activeWeightProduct) setTempWeight(w);
@@ -359,7 +360,7 @@ export default function POSPage() {
 
   const handleCloseSession = async () => {
     try {
-      const result = await closeSession(parseFloat(countedCashInput) || 0);
+      const result = await closeSession(0);
       setSummaryData(result.summary);
       setShowCloseModal(false);
       setShowSummaryModal(true);
@@ -434,6 +435,7 @@ export default function POSPage() {
   };
 
   const handleRegisterMovement = async () => {
+    if (isRegisteringMovement) return;
     const amt = parseFloat(movementAmount) || 0;
     if (amt <= 0) return;
     if (movementType !== 'INGRESO' && outlayType === 'OTRO' && justification.trim().length === 0) return;
@@ -441,6 +443,7 @@ export default function POSPage() {
     const desc =
       outlayType === 'SUELDO' ? movementDescription : outlayType === 'OTRO' ? justification : movementDescription;
 
+    setIsRegisteringMovement(true);
     try {
       await registerMovement(movementType as any, amt, desc);
       setMovementAmount('');
@@ -449,13 +452,16 @@ export default function POSPage() {
       setPosActiveTab('cobros');
     } catch (e) {
       console.error('Error registrando movimiento:', e);
+    } finally {
+      setIsRegisteringMovement(false);
     }
   };
 
   const canRegisterMovement =
     !!movementAmount &&
     parseFloat(movementAmount) > 0 &&
-    !(movementType !== 'INGRESO' && outlayType === 'OTRO' && justification.trim().length === 0);
+    !(movementType !== 'INGRESO' && outlayType === 'OTRO' && justification.trim().length === 0) &&
+    !isRegisteringMovement;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -536,7 +542,7 @@ export default function POSPage() {
         }
       }
 
-      if (posActiveTab === 'cobros' && !showCheckoutModal && !showQrModal && !showPrintModal) {
+      if (posActiveTab === 'cobros' && !showCheckoutModal && !showQrModal && !showPrintModal && !showCashModal) {
         const k = key.toLowerCase();
 
         if (k === 'm') {
@@ -767,11 +773,8 @@ export default function POSPage() {
       <AnimatePresence>
         {showCloseModal && (
           <CloseSessionModal
-            countedCashInput={countedCashInput}
-            onCountedCashChange={setCountedCashInput}
             onCancel={() => setShowCloseModal(false)}
             onConfirm={handleCloseSession}
-            inputRef={countedCashInputRef}
           />
         )}
       </AnimatePresence>

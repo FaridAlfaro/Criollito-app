@@ -61,29 +61,9 @@ export function SessionSummaryModal({ summaryData, onPrint, onFinish }: SessionS
 
           <div className="border-t border-dashed border-border my-2" />
 
-          <div className="flex justify-between font-bold text-base">
+          <div className="flex justify-between font-extrabold text-lg p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
             <span>TOTAL TEÓRICO EN CAJA:</span>
             <span>${summaryData.theoreticalTotal.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between font-bold text-base text-primary">
-            <span>EFECTIVO CONTADO:</span>
-            <span>${summaryData.countedCash.toFixed(2)}</span>
-          </div>
-
-          <div className="border-t border-dashed border-border my-2" />
-
-          <div
-            className={`flex justify-between font-extrabold text-lg p-2 rounded-lg ${
-              summaryData.difference >= 0
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-            }`}
-          >
-            <span>DIFERENCIA:</span>
-            <span>
-              {summaryData.difference > 0 ? '+' : ''}${summaryData.difference.toFixed(2)}
-              {summaryData.difference === 0 ? ' (Cuadrado)' : summaryData.difference > 0 ? ' (Sobrante)' : ' (Faltante)'}
-            </span>
           </div>
         </div>
 
