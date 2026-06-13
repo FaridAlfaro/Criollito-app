@@ -16,7 +16,7 @@ export default function BakerPage() {
       
       <header className="flex justify-between items-center mb-8 border-b-2 border-border pb-4">
         <h1 className="text-3xl font-extrabold font-heading text-foreground tracking-tight">
-          Baker's Live Baking Sheet
+          Baker&apos;s Live Baking Sheet
         </h1>
         <Button className="bg-foreground hover:bg-foreground/90 text-background font-bold px-6 py-2 rounded-xl h-12 uppercase tracking-wide">
           Start Baking

@@ -8,7 +8,7 @@ import {
 type ChartType = 'line' | 'bar' | 'donut';
 
 interface KPIGraphProps {
-  data: any[];
+  data: Record<string, unknown>[];
   type: ChartType;
   xKey?: string;
   yKey?: string;

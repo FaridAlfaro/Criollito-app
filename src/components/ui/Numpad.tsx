@@ -8,9 +8,10 @@ interface NumpadProps {
   onValueChange: (value: number) => void;
   onConfirm: () => void;
   label?: string;
+  externalValue?: number;
 }
 
-export function Numpad({ onValueChange, onConfirm, label = "Ingresar Peso (kg)" }: NumpadProps) {
+export function Numpad({ onValueChange, onConfirm, label = "Ingresar Peso (kg)", externalValue }: NumpadProps) {
   const [value, setValue] = useState("0");
 
   const handlePress = (num: string) => {
@@ -30,6 +31,25 @@ export function Numpad({ onValueChange, onConfirm, label = "Ingresar Peso (kg)" 
     }
   };
 
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    const t = setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 50);
+    return () => clearTimeout(t);
+  }, []);
+
+  React.useEffect(() => {
+    if (externalValue !== undefined && externalValue > 0) {
+      const t = setTimeout(() => {
+        setValue(externalValue.toString());
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [externalValue]);
+
   React.useEffect(() => {
     onValueChange(parseFloat(value) || 0);
   }, [value, onValueChange]);
@@ -39,9 +59,25 @@ export function Numpad({ onValueChange, onConfirm, label = "Ingresar Peso (kg)" 
   return (
     <div className="bg-card border border-border p-4 rounded-xl shadow-md w-64">
       <h3 className="text-sm font-bold text-muted-foreground text-center mb-3">{label}</h3>
-      <div className="bg-background text-foreground text-3xl font-mono text-right p-3 rounded-lg mb-4 border border-border overflow-hidden">
-        {value}
-      </div>
+      <input
+        ref={inputRef}
+        type="text"
+        className="w-full bg-background text-foreground text-3xl font-mono text-right p-3 rounded-lg mb-4 border border-border focus:ring-2 focus:ring-primary focus:outline-none"
+        value={value}
+        onChange={(e) => {
+          const val = e.target.value;
+          if (/^[0-9]*\.?[0-9]*$/.test(val) || val === '') {
+            setValue(val || "0");
+          }
+        }}
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            onConfirm();
+            setValue("0");
+          }
+        }}
+      />
       <div className="grid grid-cols-3 gap-2">
         {keys.map(k => (
           <Button 

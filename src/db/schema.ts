@@ -16,11 +16,12 @@ import { relations } from "drizzle-orm";
 
 export const roleEnum = pgEnum("role", ["ADMIN", "SUPERVISOR", "BAKER", "CASHIER"]);
 export const productTypeEnum = pgEnum("product_type", ["UNIT", "WEIGHT"]);
-export const paymentMethodEnum = pgEnum("payment_method", ["CASH", "DEBIT", "CREDIT"]);
+export const paymentMethodEnum = pgEnum("payment_method", ["CASH", "DEBIT", "CREDIT", "QR"]);
 export const bakeStatusEnum = pgEnum("bake_status", ["PENDING", "BAKING", "COMPLETED"]);
 export const alertTypeEnum = pgEnum("alert_type", ["LOW_STOCK", "SYSTEM"]);
 export const docTypeEnum = pgEnum("doc_type", ["DNI", "CUIT", "CUIL", "PASAPORTE", "CONSUMIDOR_FINAL"]);
 export const comprobanteTypeEnum = pgEnum("comprobante_type", ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO"]);
+export const movementTypeEnum = pgEnum("movement_type", ["INGRESO", "EGRESO_PROVEEDOR", "EGRESO_SUELDO", "EGRESO_VARIOS"]);
 
 
 // ==========================================
@@ -60,6 +61,20 @@ export const cashSessions = pgTable("cash_sessions", {
   totalCash: decimal("total_cash", { precision: 10, scale: 2 }).default("0"),
   totalDebit: decimal("total_debit", { precision: 10, scale: 2 }).default("0"),
   totalCredit: decimal("total_credit", { precision: 10, scale: 2 }).default("0"),
+  totalQr: decimal("total_qr", { precision: 10, scale: 2 }).default("0"),
+  theoreticalAmount: decimal("theoretical_amount", { precision: 10, scale: 2 }).default("0"),
+  difference: decimal("difference", { precision: 10, scale: 2 }),
+});
+
+export const cashMovements = pgTable("cash_movements", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  cashSessionId: uuid("cash_session_id").references(() => cashSessions.id, { onDelete: "cascade" }).notNull(),
+  cashierId: uuid("cashier_id").references(() => users.id).notNull(),
+  type: movementTypeEnum("type").notNull(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const products = pgTable("products", {
@@ -138,18 +153,27 @@ export const tenantsRelations = relations(tenants, ({ many }) => ({
   bakeQueue: many(bakeQueue),
   alerts: many(alerts),
   cashSessions: many(cashSessions),
+  cashMovements: many(cashMovements),
 }));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
   tenant: one(tenants, { fields: [users.tenantId], references: [tenants.id] }),
   sales: many(sales),
   cashSessions: many(cashSessions),
+  cashMovements: many(cashMovements),
 }));
 
 export const cashSessionsRelations = relations(cashSessions, ({ one, many }) => ({
   tenant: one(tenants, { fields: [cashSessions.tenantId], references: [tenants.id] }),
   cashier: one(users, { fields: [cashSessions.cashierId], references: [users.id] }),
   sales: many(sales),
+  movements: many(cashMovements),
+}));
+
+export const cashMovementsRelations = relations(cashMovements, ({ one }) => ({
+  tenant: one(tenants, { fields: [cashMovements.tenantId], references: [tenants.id] }),
+  session: one(cashSessions, { fields: [cashMovements.cashSessionId], references: [cashSessions.id] }),
+  cashier: one(users, { fields: [cashMovements.cashierId], references: [users.id] }),
 }));
 
 export const productsRelations = relations(products, ({ one, many }) => ({

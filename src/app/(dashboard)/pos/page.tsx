@@ -1,327 +1,1029 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Button } from "@/components/ui/button";
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import { useStore, Product } from '@/store/useStore';
-import { ShoppingCart, Plus, Minus, Trash2, CheckCircle2, Banknote, CreditCard, ScanLine, UserSquare2, AlertCircle, Scale } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Numpad } from '@/components/ui/Numpad';
+import { useSerialScale } from '@/hooks/useSerialScale';
+import { getBranchWorkers } from '@/actions/cashSessions';
+import { processMercadoPagoPayment } from '@/actions/payments';
+import { getCustomerByDni } from '@/actions/customers';
 
-type PaymentMethod = 'CASH' | 'DEBIT' | 'CREDIT' | null;
+import { PosLoadingScreen } from './components/PosLoadingScreen';
+import { PosStatusBar } from './components/PosStatusBar';
+import { OpenSessionModal } from './components/OpenSessionModal';
+import { CloseSessionModal } from './components/CloseSessionModal';
+import { SessionSummaryModal } from './components/SessionSummaryModal';
+import { QrPaymentModal } from './components/QrPaymentModal';
+import { CheckoutModal } from './components/CheckoutModal';
+import { CashChangePanel } from './components/CashChangePanel';
+import { EmailInvoiceModal } from './components/EmailInvoiceModal';
+import { WeightNumpadModal } from './components/WeightNumpadModal';
+import { SalePrintModal } from './components/SalePrintModal';
+import { MovementPrintModal } from './components/MovementPrintModal';
+import { HistoryPrintModal } from './components/HistoryPrintModal';
+import { CobrosTab } from './components/CobrosTab';
+import { MovementsTab } from './components/MovementsTab';
+import { HistoryTab } from './components/HistoryTab';
+import { TicketPrintPreview, MovementPrintPreview, HistoryReportPrintPreview } from './components/PrintPreviews';
+import type { PaymentMethod, SummaryData, CartItem } from './components/types';
 
-// Límite ARCA 2025 para consumidor final anónimo
-const ARCA_LIMIT = 10000000; 
+const ARCA_LIMIT = 10000000;
 
 export default function POSPage() {
-  const { products, processSale } = useStore();
-  const [cart, setCart] = useState<{ product: Product, quantity: number }[]>([]);
+  const {
+    products,
+    processSale,
+    currentSession,
+    pendingSales,
+    openSession,
+    registerMovement,
+    closeSession,
+    syncOfflineSales,
+    salesHistory,
+    movementsHistory,
+    posActiveTab,
+    setPosActiveTab,
+  } = useStore();
+
+  const [mounted, setMounted] = useState(false);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [customerDoc, setCustomerDoc] = useState('');
-  
-  // Numpad state
+  const [lastSaleDni, setLastSaleDni] = useState('');
+  const [customerEmailStatus, setCustomerEmailStatus] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isPrinterConnected, setIsPrinterConnected] = useState(false);
+
+  const customerDocInputRef = useRef<HTMLInputElement>(null);
+  const initialAmountInputRef = useRef<HTMLInputElement>(null);
+  const countedCashInputRef = useRef<HTMLInputElement>(null);
+  const movementAmountInputRef = useRef<HTMLInputElement>(null);
+  const justificationInputRef = useRef<HTMLTextAreaElement>(null);
+  const movementDescriptionInputRef = useRef<HTMLInputElement>(null);
+  const cashReceivedInputRef = useRef<HTMLInputElement>(null);
+
+  const [workers, setWorkers] = useState<{ id: string; name: string; role: string }[]>([]);
+  const [selectedWorkerId, setSelectedWorkerId] = useState('');
+
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrData, setQrData] = useState('');
+  const [isQrPaid, setIsQrPaid] = useState(false);
+  const [isProcessingQr, setIsProcessingQr] = useState(false);
+
+  const [cashReceived, setCashReceived] = useState('');
+  const [changeToGive, setChangeToGive] = useState<number | null>(null);
+
+  const [outlayType, setOutlayType] = useState<'PROVEEDOR' | 'INSUMO' | 'MATERIA_PRIMA' | 'SUELDO' | 'OTRO'>('PROVEEDOR');
+  const [justification, setJustification] = useState('');
+
+  const total = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const requiresDoc = total >= ARCA_LIMIT;
+  const isCashInsufficient = paymentMethod === 'CASH' && cashReceived !== '' && parseFloat(cashReceived) < total;
+  const canConfirm = cart.length > 0 && paymentMethod && (!requiresDoc || customerDoc.length >= 7) && !isCashInsufficient;
+
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showCashModal, setShowCashModal] = useState(false);
+  const [showEmailInvoiceModal, setShowEmailInvoiceModal] = useState(false);
+  const [saleToPrint, setSaleToPrint] = useState<any | null>(null);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [printingType, setPrintingType] = useState<'factura' | 'recibo' | null>(null);
+
+  const [movementToPrint, setMovementToPrint] = useState<any | null>(null);
+  const [showMovementPrintModal, setShowMovementPrintModal] = useState(false);
+  const [printAllSession, setPrintAllSession] = useState(false);
+  const [showPrintAllModal, setShowPrintAllModal] = useState(false);
+
+  const [showOpenModal, setShowOpenModal] = useState(false);
+  const [initialAmountInput, setInitialAmountInput] = useState('0');
+
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [countedCashInput, setCountedCashInput] = useState('0');
+
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [summaryData, setSummaryData] = useState<SummaryData | null>(null);
+
+  const [movementType, setMovementType] = useState<'INGRESO' | 'EGRESO_PROVEEDOR' | 'EGRESO_SUELDO' | 'EGRESO_VARIOS'>('INGRESO');
+  const [movementAmount, setMovementAmount] = useState('');
+  const [movementDescription, setMovementDescription] = useState('');
+
   const [activeWeightProduct, setActiveWeightProduct] = useState<Product | null>(null);
   const [tempWeight, setTempWeight] = useState<number>(0);
-
-  // Barcode scanner state
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
 
-  const addToCart = useCallback((product: Product, customQuantity?: number) => {
-    // Si es por peso y no hay cantidad custom, abrir Numpad
-    if (product.type === 'WEIGHT' && customQuantity === undefined) {
-      setActiveWeightProduct(product);
-      return;
+  const { connected: scaleConnected, error: scaleError, weight: scaleWeight, connectScale, disconnectScale } = useSerialScale((w) => {
+    if (activeWeightProduct) setTempWeight(w);
+  });
+
+  const [simulatedWeight, setSimulatedWeight] = useState(0.0);
+  const [isSimulatingScale, setIsSimulatingScale] = useState(false);
+
+  useEffect(() => {
+    async function loadWorkers() {
+      const list = await getBranchWorkers();
+      setWorkers(list);
     }
-
-    const qtyToAdd = customQuantity ?? 1;
-
-    setCart(prev => {
-      const existing = prev.find(item => item.product.id === product.id);
-      if (existing) {
-        return prev.map(item => 
-          item.product.id === product.id 
-            ? { ...item, quantity: item.quantity + qtyToAdd } 
-            : item
-        );
-      }
-      return [...prev, { product, quantity: qtyToAdd }];
-    });
+    loadWorkers();
   }, []);
 
-  const handleWeightConfirm = () => {
-    if (activeWeightProduct && tempWeight > 0) {
-      addToCart(activeWeightProduct, tempWeight);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setMounted(true);
+      if (typeof window !== 'undefined') setIsOnline(navigator.onLine);
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncOfflineSales();
+    };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    if (navigator.onLine) syncOfflineSales();
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [mounted, syncOfflineSales]);
+
+  useEffect(() => {
+    if (mounted && !currentSession) {
+      const t = setTimeout(() => setShowOpenModal(true), 0);
+      return () => clearTimeout(t);
     }
+    const t = setTimeout(() => setShowOpenModal(false), 0);
+    return () => clearTimeout(t);
+  }, [mounted, currentSession]);
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (isSimulatingScale && activeWeightProduct) {
+      const t = setTimeout(() => {
+        setSimulatedWeight(1.25);
+        setTempWeight(1.25);
+      }, 0);
+      interval = setInterval(() => {
+        const nextW = parseFloat((Math.random() * 0.1 + 1.2).toFixed(3));
+        setSimulatedWeight(nextW);
+        setTempWeight(nextW);
+      }, 1500);
+      return () => {
+        clearTimeout(t);
+        if (interval) clearInterval(interval);
+      };
+    }
+    const t = setTimeout(() => setSimulatedWeight(0.0), 0);
+    return () => clearTimeout(t);
+  }, [isSimulatingScale, activeWeightProduct]);
+
+  const addToCart = useCallback(
+    (product: Product, customQuantity?: number) => {
+      if (product.type === 'WEIGHT' && customQuantity === undefined) {
+        setActiveWeightProduct(product);
+        if (scaleConnected && scaleWeight > 0) setTempWeight(scaleWeight);
+        return;
+      }
+      const qtyToAdd = customQuantity ?? 1;
+      setCart((prev) => {
+        const existing = prev.find((item) => item.product.id === product.id);
+        if (existing) {
+          return prev.map((item) =>
+            item.product.id === product.id
+              ? { ...item, quantity: parseFloat((item.quantity + qtyToAdd).toFixed(3)) }
+              : item
+          );
+        }
+        return [...prev, { product, quantity: qtyToAdd }];
+      });
+    },
+    [scaleConnected, scaleWeight]
+  );
+
+  const handleWeightConfirm = () => {
+    if (activeWeightProduct && tempWeight > 0) addToCart(activeWeightProduct, tempWeight);
     setActiveWeightProduct(null);
     setTempWeight(0);
+    setIsSimulatingScale(false);
   };
 
-  // Escucha global de teclado (Simula Lector de Código de Barras y Lector EAN-13 de Balanza)
+  const handleCashReceivedChange = (value: string) => {
+    setCashReceived(value);
+    const amount = parseFloat(value);
+    if (!isNaN(amount) && amount >= total) setChangeToGive(amount - total);
+    else setChangeToGive(null);
+  };
+
+  const applyQuickCash = (amount: number) => {
+    handleCashReceivedChange((amount === 0 ? total : amount).toString());
+  };
+
+  const handleQrPaymentStart = async () => {
+    if (total <= 0) return;
+    setIsProcessingQr(true);
+    setShowQrModal(true);
+    setIsQrPaid(false);
+    setQrData('');
+    try {
+      const response = await processMercadoPagoPayment({
+        amount: total,
+        description: 'Venta POS El Criollito',
+        paymentMethod: 'QR',
+      });
+      if (response.success && response.qrData) setQrData(response.qrData);
+    } catch (e) {
+      console.error('Error generating QR payment:', e);
+    } finally {
+      setIsProcessingQr(false);
+    }
+  };
+
+  const handleSimulateQrSuccess = () => {
+    setIsQrPaid(true);
+    setPaymentMethod('QR');
+    setTimeout(() => setShowQrModal(false), 1200);
+  };
+
+  const handleCerrarVentaClick = () => {
+    if (!canConfirm) return;
+    setShowCheckoutModal(true);
+  };
+
+  const confirmSaleWithDocument = async (docType: 'factura' | 'recibo' | 'ninguno') => {
+    setShowCheckoutModal(false);
+
+    let compTipo: 'FACTURA_A' | 'FACTURA_B' | 'FACTURA_C' | null = null;
+    let caeData = undefined;
+
+    if (docType === 'factura') {
+      compTipo = customerDoc && customerDoc.length > 8 ? 'FACTURA_A' : 'FACTURA_B';
+      const cae = Math.floor(Math.random() * 10000000000000).toString().padStart(14, '0');
+      const expiration = new Date();
+      expiration.setDate(expiration.getDate() + 10);
+      caeData = {
+        cae,
+        expiration: expiration.toISOString(),
+        numero: Math.floor(Math.random() * 10000),
+        qr: 'https://www.afip.gob.ar/fe/qr/?p=mockedQrData',
+      };
+    }
+
+    const ticketItems = cart.map((item) => ({
+      name: item.product.name,
+      quantity: item.quantity,
+      price: item.product.price,
+      subtotal: item.product.price * item.quantity,
+    }));
+
+    const saleInfo = {
+      createdAt: new Date().toISOString(),
+      totalAmount: total,
+      paymentMethod: paymentMethod!,
+      comprobanteTipo: compTipo,
+      clienteDocumento: customerDoc || null,
+      cae: caeData?.cae || null,
+      caeExpiration: caeData?.expiration || null,
+      numeroComprobante: caeData?.numero || null,
+      qrCodeData: caeData?.qr || null,
+      items: ticketItems,
+    };
+
+    await processSale(
+      cart.map((item) => ({ productId: item.product.id, quantity: item.quantity })),
+      paymentMethod!,
+      customerDoc || undefined,
+      compTipo,
+      caeData
+    );
+
+    setLastSaleDni(customerDoc);
+    setCart([]);
+    setPaymentMethod(null);
+    setCustomerDoc('');
+    setCustomerEmailStatus(null);
+    setCashReceived('');
+    setChangeToGive(null);
+
+    if (docType !== 'ninguno') {
+      if (isPrinterConnected) {
+        // Simular impresión térmica real
+        console.log('Imprimiendo en impresora térmica...');
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 3000);
+      } else {
+        if (customerDoc && customerEmailStatus && customerEmailStatus !== 'not_found') {
+          console.log(`Enviando factura automáticamente a ${customerEmailStatus}...`);
+          setShowSuccess(true);
+          setTimeout(() => setShowSuccess(false), 3000);
+        } else {
+          // Abrir modal de email porque no hay impresora y no hay email validado
+          setShowEmailInvoiceModal(true);
+        }
+      }
+    } else {
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    }
+  };
+
+  const handleCustomerDocValidate = async (dni: string) => {
+    if (!dni || dni.length < 7) {
+      setCustomerEmailStatus(null);
+      return;
+    }
+    const res = await getCustomerByDni(dni);
+    if (res.success && res.customer && res.customer.email) {
+      setCustomerEmailStatus(res.customer.email);
+    } else {
+      setCustomerEmailStatus('not_found');
+    }
+  };
+
+  const handleEmailInvoiceSent = () => {
+    setShowEmailInvoiceModal(false);
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+  };
+
+  const handleOpenSession = async () => {
+    try {
+      await openSession(parseFloat(initialAmountInput) || 0);
+      setShowOpenModal(false);
+    } catch (err) {
+      console.error('Error abriendo sesión:', err);
+    }
+  };
+
+  const handleCloseSession = async () => {
+    try {
+      const result = await closeSession(parseFloat(countedCashInput) || 0);
+      setSummaryData(result.summary);
+      setShowCloseModal(false);
+      setShowSummaryModal(true);
+    } catch (err) {
+      console.error('Error cerrando sesión:', err);
+    }
+  };
+
+  const updateQuantity = (productId: string, delta: number) => {
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.product.id === productId) {
+          const newQ = parseFloat((item.quantity + delta).toFixed(3));
+          return newQ > 0 ? { ...item, quantity: newQ } : item;
+        }
+        return item;
+      })
+    );
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+  };
+
+  const selectCash = () => {
+    setPaymentMethod('CASH');
+    setCashReceived('');
+    setChangeToGive(null);
+    setShowCashModal(true);
+  };
+
+  const closeCashPanel = () => {
+    setShowCashModal(false);
+  };
+
+  const handleMovementTypeFromSelect = (val: string) => {
+    if (val === 'EGRESO_PROVEEDOR') {
+      setOutlayType('PROVEEDOR');
+      setMovementType('EGRESO_PROVEEDOR');
+      setMovementDescription('Pago a Proveedores');
+    } else if (val === 'EGRESO_SUELDO') {
+      setOutlayType('SUELDO');
+      setMovementType('EGRESO_SUELDO');
+      if (workers.length > 0) {
+        setSelectedWorkerId(workers[0].id);
+        setMovementDescription(`Pago de Sueldo - ${workers[0].name}`);
+      } else {
+        setMovementDescription('Pago de Sueldo');
+      }
+    } else {
+      setOutlayType('INSUMO');
+      setMovementType('EGRESO_VARIOS');
+      setMovementDescription('Compra Insumo');
+    }
+  };
+
+  const handleSubCategoryChange = (val: 'PROVEEDOR' | 'INSUMO' | 'MATERIA_PRIMA' | 'SUELDO' | 'OTRO') => {
+    setOutlayType(val);
+    if (val === 'INSUMO') setMovementDescription('Compra Insumo');
+    else if (val === 'MATERIA_PRIMA') setMovementDescription('Compra Materia Prima');
+    else {
+      setOutlayType('OTRO');
+      setMovementDescription('');
+      setJustification('');
+    }
+  };
+
+  const handleWorkerChange = (workerId: string) => {
+    setSelectedWorkerId(workerId);
+    const w = workers.find((work) => work.id === workerId);
+    if (w) setMovementDescription(`Pago de Sueldo - ${w.name}`);
+  };
+
+  const handleRegisterMovement = async () => {
+    const amt = parseFloat(movementAmount) || 0;
+    if (amt <= 0) return;
+    if (movementType !== 'INGRESO' && outlayType === 'OTRO' && justification.trim().length === 0) return;
+
+    const desc =
+      outlayType === 'SUELDO' ? movementDescription : outlayType === 'OTRO' ? justification : movementDescription;
+
+    try {
+      await registerMovement(movementType as any, amt, desc);
+      setMovementAmount('');
+      setMovementDescription('');
+      setJustification('');
+      setPosActiveTab('cobros');
+    } catch (e) {
+      console.error('Error registrando movimiento:', e);
+    }
+  };
+
+  const canRegisterMovement =
+    !!movementAmount &&
+    parseFloat(movementAmount) > 0 &&
+    !(movementType !== 'INGRESO' && outlayType === 'OTRO' && justification.trim().length === 0);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          (e.target as HTMLElement).blur();
+        }
+        return;
+      }
 
-      if (e.key === 'Enter') {
+      const key = e.key;
+
+      if (key === 'F1') {
+        e.preventDefault();
+        setPosActiveTab('cobros');
+        return;
+      }
+      if (key === 'F2') {
+        e.preventDefault();
+        setPosActiveTab('movimientos');
+        return;
+      }
+      if (key === 'F3') {
+        e.preventDefault();
+        setPosActiveTab('historial');
+        return;
+      }
+
+      if (showCheckoutModal) {
+        const k = key.toLowerCase();
+        if (k === 'f') {
+          e.preventDefault();
+          confirmSaleWithDocument('factura');
+          return;
+        }
+        if (k === 'b') {
+          e.preventDefault();
+          confirmSaleWithDocument('recibo');
+          return;
+        }
+        if (key === 'Enter' || k === 'n') {
+          e.preventDefault();
+          confirmSaleWithDocument('ninguno');
+          return;
+        }
+        if (key === 'Escape') {
+          e.preventDefault();
+          setShowCheckoutModal(false);
+          return;
+        }
+      }
+
+      if (showEmailInvoiceModal) {
+        if (key === 'Escape') {
+          e.preventDefault();
+          setShowEmailInvoiceModal(false);
+          setShowSuccess(true);
+          setTimeout(() => setShowSuccess(false), 3000);
+          return;
+        }
+      }
+
+      if (showQrModal) {
+        if (key === 'Escape') {
+          e.preventDefault();
+          setShowQrModal(false);
+          setPaymentMethod(null);
+          return;
+        }
+      }
+
+      if (showPrintModal) {
+        if (key === 'Escape' || key === 'Enter') {
+          e.preventDefault();
+          setShowPrintModal(false);
+          setSaleToPrint(null);
+          return;
+        }
+      }
+
+      if (posActiveTab === 'cobros' && !showCheckoutModal && !showQrModal && !showPrintModal) {
+        const k = key.toLowerCase();
+
+        if (k === 'm') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '11111111-1111-1111-1111-111111111111');
+          if (p) addToCart(p, 1);
+          return;
+        }
+        if (k === ',') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '11111111-1111-1111-1111-111111111111');
+          if (p) addToCart(p, 6);
+          return;
+        }
+        if (k === '.') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '11111111-1111-1111-1111-111111111111');
+          if (p) addToCart(p, 12);
+          return;
+        }
+        if (k === 'p') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '22222222-2222-2222-2222-222222222222');
+          if (p) addToCart(p);
+          return;
+        }
+        if (k === 'k') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '33333333-3333-3333-3333-333333333333');
+          if (p) addToCart(p);
+          return;
+        }
+        if (k === 'f') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '44444444-4444-4444-4444-444444444444');
+          if (p) addToCart(p, 1);
+          return;
+        }
+        if (k === 'g') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '44444444-4444-4444-4444-444444444444');
+          if (p) addToCart(p, 6);
+          return;
+        }
+        if (k === 'h') {
+          e.preventDefault();
+          const p = products.find((prod) => prod.id === '44444444-4444-4444-4444-444444444444');
+          if (p) addToCart(p, 12);
+          return;
+        }
+
+        if (k === 'e') {
+          e.preventDefault();
+          selectCash();
+          return;
+        }
+        if (k === 'd') {
+          e.preventDefault();
+          setPaymentMethod('DEBIT');
+          return;
+        }
+        if (k === 'c') {
+          e.preventDefault();
+          setPaymentMethod('CREDIT');
+          return;
+        }
+        if (k === 'q') {
+          e.preventDefault();
+          handleQrPaymentStart();
+          return;
+        }
+        if (k === 'v') {
+          e.preventDefault();
+          setCart([]);
+          return;
+        }
+        if (k === '0') {
+          e.preventDefault();
+          customerDocInputRef.current?.focus();
+          return;
+        }
+        if (k === 't') {
+          e.preventDefault();
+          setShowCloseModal(true);
+          return;
+        }
+
+        if (paymentMethod === 'CASH') {
+          if (k === 'x') {
+            e.preventDefault();
+            applyQuickCash(0);
+            return;
+          }
+          if (k === 'y') {
+            e.preventDefault();
+            applyQuickCash(1000);
+            return;
+          }
+          if (k === 'w') {
+            e.preventDefault();
+            applyQuickCash(2000);
+            return;
+          }
+          if (k === 'h') {
+            e.preventDefault();
+            applyQuickCash(5000);
+            return;
+          }
+          if (k === 'o') {
+            e.preventDefault();
+            applyQuickCash(10000);
+            return;
+          }
+          if (k === 'j') {
+            e.preventDefault();
+            applyQuickCash(20000);
+            return;
+          }
+        }
+
+        if ((key === 'Enter' || key === ' ') && canConfirm) {
+          e.preventDefault();
+          handleCerrarVentaClick();
+          return;
+        }
+      }
+
+      if (key === 'Enter') {
         if (barcodeBuffer.length > 0) {
-          // Parseo EAN-13 de Balanza homologada (ej. 20PPPPPKKKKKC)
           if (barcodeBuffer.length === 13 && barcodeBuffer.startsWith('20')) {
             const productCode = barcodeBuffer.substring(2, 7);
-            const weightOrPrice = parseInt(barcodeBuffer.substring(7, 12), 10) / 1000; // Asumiendo formato peso
-            
-            // Buscar producto por parte del código
-            const product = products.find(p => p.barcode?.includes(productCode));
-            if (product) {
-              addToCart(product, weightOrPrice);
-            }
+            const weightOrPrice = parseInt(barcodeBuffer.substring(7, 12), 10) / 1000;
+            const product = products.find((p) => p.barcode?.includes(productCode));
+            if (product) addToCart(product, weightOrPrice);
           } else {
-            // Producto unitario normal
-            const product = products.find(p => p.barcode === barcodeBuffer);
-            if (product) {
-              addToCart(product);
-            }
+            const product = products.find((p) => p.barcode === barcodeBuffer);
+            if (product) addToCart(product);
           }
           setBarcodeBuffer('');
         }
-      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        setBarcodeBuffer(prev => prev + e.key);
+      } else if (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (/[0-9]/.test(key)) setBarcodeBuffer((prev) => prev + key);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     const timeout = setTimeout(() => setBarcodeBuffer(''), 100);
-
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       clearTimeout(timeout);
     };
-  }, [barcodeBuffer, products, addToCart]);
+  }, [barcodeBuffer, products, addToCart, showCheckoutModal, showQrModal, showPrintModal, posActiveTab, paymentMethod, canConfirm]);
 
+  useEffect(() => {
+    if (showOpenModal) {
+      const t = setTimeout(() => {
+        initialAmountInputRef.current?.focus();
+        initialAmountInputRef.current?.select();
+      }, 50);
+      return () => clearTimeout(t);
+    }
+  }, [showOpenModal]);
 
-  const updateQuantity = (productId: string, delta: number) => {
-    setCart(prev => prev.map(item => {
-      if (item.product.id === productId) {
-        const newQ = item.quantity + delta;
-        return newQ > 0 ? { ...item, quantity: newQ } : item;
-      }
-      return item;
-    }));
-  };
+  useEffect(() => {
+    if (showCloseModal) {
+      const t = setTimeout(() => {
+        countedCashInputRef.current?.focus();
+        countedCashInputRef.current?.select();
+      }, 50);
+      return () => clearTimeout(t);
+    }
+  }, [showCloseModal]);
 
-  const removeFromCart = (productId: string) => {
-    setCart(prev => prev.filter(item => item.product.id !== productId));
-  };
+  useEffect(() => {
+    if (posActiveTab === 'movimientos') {
+      const t = setTimeout(() => {
+        movementAmountInputRef.current?.focus();
+        movementAmountInputRef.current?.select();
+      }, 50);
+      return () => clearTimeout(t);
+    }
+  }, [posActiveTab]);
 
-  const total = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
-  
-  // ARCA Validation
-  const requiresDoc = total >= ARCA_LIMIT;
-  const canConfirm = cart.length > 0 && paymentMethod && (!requiresDoc || customerDoc.length >= 7);
+  useEffect(() => {
+    if (posActiveTab === 'movimientos' && movementType !== 'INGRESO' && outlayType === 'OTRO') {
+      const t = setTimeout(() => {
+        justificationInputRef.current?.focus();
+        justificationInputRef.current?.select();
+      }, 50);
+      return () => clearTimeout(t);
+    }
+  }, [outlayType, movementType, posActiveTab]);
 
-  const handleConfirmSale = () => {
-    if (!canConfirm) return;
-    
-    processSale(
-      cart.map(item => ({ productId: item.product.id, quantity: item.quantity })),
-      customerDoc
-    );
-    
-    setCart([]);
-    setPaymentMethod(null);
-    setCustomerDoc('');
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 3000);
-  };
+  useEffect(() => {
+    if (paymentMethod === 'CASH') {
+      const t = setTimeout(() => {
+        cashReceivedInputRef.current?.focus();
+        cashReceivedInputRef.current?.select();
+      }, 50);
+      return () => clearTimeout(t);
+    }
+  }, [paymentMethod]);
+
+  if (!mounted) return <PosLoadingScreen />;
 
   return (
-    <div className="flex h-[calc(100vh-6rem)] gap-6 relative">
-      
-      {/* Numpad Modal Overlay */}
+    <div className="flex flex-col h-full w-full relative bg-slate-50/50 text-slate-900 overflow-hidden p-4">
+      <PosStatusBar
+        hasSession={!!currentSession}
+        isOnline={isOnline}
+        pendingCount={pendingSales.length}
+        isPrinterConnected={isPrinterConnected}
+        onTogglePrinter={() => setIsPrinterConnected(!isPrinterConnected)}
+        onCloseSession={() => setShowCloseModal(true)}
+      />
+
       <AnimatePresence>
-        {activeWeightProduct && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center"
-          >
-            <div className="flex flex-col items-center">
-               <h2 className="text-2xl font-bold mb-4 text-foreground flex items-center gap-2">
-                 <Scale className="text-primary" /> {activeWeightProduct.name}
-               </h2>
-               <Numpad 
-                 onValueChange={setTempWeight} 
-                 onConfirm={handleWeightConfirm} 
-                 label="Ingrese Peso Manual o espere a Balanza"
-               />
-               <Button variant="ghost" className="mt-4 text-muted-foreground" onClick={() => setActiveWeightProduct(null)}>Cancelar</Button>
-            </div>
-          </motion.div>
+        {showOpenModal && (
+          <OpenSessionModal
+            initialAmountInput={initialAmountInput}
+            onAmountChange={setInitialAmountInput}
+            onConfirm={handleOpenSession}
+            inputRef={initialAmountInputRef}
+          />
         )}
       </AnimatePresence>
 
-      {/* Left side: Products Grid */}
-      <div className="flex-1 bg-card rounded-2xl shadow-sm p-6 flex flex-col border border-border">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold font-heading text-foreground flex items-center gap-2">
-            Productos Rápidos
-          </h2>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-full border border-border">
-            <ScanLine size={16} className="text-primary animate-pulse" />
-            <span>Lector / Balanza activo</span>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 overflow-y-auto pr-2 pb-4">
-          {products.map(product => (
-            <motion.div 
-              whileHover={{ scale: 1.02, borderColor: 'var(--primary)' }}
-              whileTap={{ scale: 0.98 }}
-              key={product.id}
-              onClick={() => addToCart(product)}
-              className="p-5 border border-border rounded-xl cursor-pointer transition-all hover:shadow-md bg-muted/20 flex flex-col justify-between h-32 select-none group"
-            >
-              <div>
-                <h3 className="font-bold text-foreground leading-tight">{product.name}</h3>
-                {product.barcode && <p className="text-[10px] text-muted-foreground opacity-50 mt-1">{product.barcode}</p>}
-              </div>
-              <div className="flex justify-between items-end mt-2">
-                <span className="text-primary font-bold">${product.price}</span>
-                <span className="text-xs text-muted-foreground font-medium bg-background border border-border px-2 py-1 rounded-md">
-                  {product.type === 'WEIGHT' ? '/kg' : '/ud'}
-                </span>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
+      <AnimatePresence>
+        {showCloseModal && (
+          <CloseSessionModal
+            countedCashInput={countedCashInput}
+            onCountedCashChange={setCountedCashInput}
+            onCancel={() => setShowCloseModal(false)}
+            onConfirm={handleCloseSession}
+            inputRef={countedCashInputRef}
+          />
+        )}
+      </AnimatePresence>
 
-      {/* Right side: Current Ticket */}
-      <div className="w-[450px] bg-card rounded-2xl shadow-sm p-6 flex flex-col border border-border relative overflow-hidden">
-        <AnimatePresence>
-          {showSuccess && (
-            <motion.div 
-              initial={{ opacity: 0, y: 50 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -50 }}
-              className="absolute inset-0 z-20 bg-primary flex flex-col items-center justify-center text-primary-foreground"
-            >
-              <CheckCircle2 size={64} className="mb-4 text-primary-foreground" />
-              <h2 className="text-3xl font-bold font-heading">Venta Exitosa</h2>
-              <p className="mt-2 text-primary-foreground/90 font-medium">Factura ARCA emitida correctamente</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+      <AnimatePresence>
+        {showSummaryModal && summaryData && (
+          <SessionSummaryModal
+            summaryData={summaryData}
+            onPrint={() => window.print()}
+            onFinish={() => {
+              setShowSummaryModal(false);
+              setSummaryData(null);
+              window.location.href = '/';
+            }}
+          />
+        )}
+      </AnimatePresence>
 
-        <div className="flex justify-between items-center mb-6 text-foreground border-b border-border pb-4">
-          <div className="flex items-center gap-2">
-            <ShoppingCart size={24} className="text-primary" />
-            <h2 className="text-2xl font-bold font-heading">Ticket Actual</h2>
-          </div>
-          {cart.length > 0 && (
-            <button onClick={() => setCart([])} className="text-sm text-muted-foreground hover:text-destructive font-medium transition-colors">
-              Vaciar Ticket
-            </button>
-          )}
-        </div>
-        
-        <div className="flex-1 overflow-y-auto mb-6 pr-2 space-y-3">
-          {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground opacity-50">
-              <ShoppingCart size={48} className="mb-4" />
-              <p>Escanea o selecciona productos</p>
-            </div>
-          ) : (
-            <AnimatePresence>
-              {cart.map(item => (
-                <motion.div 
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  key={item.product.id} 
-                  className="flex flex-col gap-2 p-3 bg-muted/30 rounded-lg border border-border/50"
-                >
-                  <div className="flex justify-between font-semibold text-foreground">
-                    <span>{item.product.name}</span>
-                    <span>${item.product.price * item.quantity}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <div className="flex items-center gap-3 bg-background px-2 py-1 rounded-md border border-border">
-                      <button onClick={() => updateQuantity(item.product.id, item.product.type === 'WEIGHT' ? -0.5 : -1)} className="text-muted-foreground hover:text-primary transition-colors"><Minus size={14} /></button>
-                      <span className="font-bold w-12 text-center text-foreground">{item.quantity} {item.product.type === 'WEIGHT' ? 'kg' : 'ud'}</span>
-                      <button onClick={() => updateQuantity(item.product.id, item.product.type === 'WEIGHT' ? 0.5 : 1)} className="text-muted-foreground hover:text-primary transition-colors"><Plus size={14} /></button>
-                    </div>
-                    <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground hover:text-destructive p-2 rounded-md hover:bg-destructive/10 transition-colors flex items-center gap-1">
-                      <Trash2 size={16} /> <span className="text-xs font-semibold">Eliminar</span>
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          )}
-        </div>
+      <AnimatePresence>
+        {showQrModal && (
+          <QrPaymentModal
+            total={total}
+            qrData={qrData}
+            isProcessing={isProcessingQr}
+            isPaid={isQrPaid}
+            onSimulateSuccess={handleSimulateQrSuccess}
+            onCancel={() => {
+              setShowQrModal(false);
+              setPaymentMethod(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
-        <div className="border-t border-border pt-4 bg-card z-10">
-          <div className="flex justify-between font-bold text-3xl mb-4 text-foreground font-heading">
-            <span>Total</span>
-            <span className="text-primary">${total}</span>
-          </div>
+      <AnimatePresence>
+        {showCheckoutModal && (
+          <CheckoutModal
+            onSelectFactura={() => confirmSaleWithDocument('factura')}
+            onSelectRecibo={() => confirmSaleWithDocument('recibo')}
+            onSelectNinguno={() => confirmSaleWithDocument('ninguno')}
+          />
+        )}
+      </AnimatePresence>
 
-          {/* ARCA Billing Input */}
-          <div className="mb-4 space-y-2">
-             <div className="flex items-center justify-between">
-                <label className="text-sm font-semibold flex items-center gap-2 text-foreground">
-                  <UserSquare2 size={16} className="text-muted-foreground" />
-                  DNI/CUIT Cliente
-                </label>
-                {requiresDoc && <span className="text-[10px] bg-destructive/10 text-destructive px-2 py-0.5 rounded font-bold uppercase flex items-center gap-1"><AlertCircle size={10}/> Req. ARCA</span>}
-             </div>
-             <input 
-                type="number" 
-                placeholder={requiresDoc ? "Obligatorio (Total > $10M)" : "Opcional (Consumidor Final)"}
-                value={customerDoc}
-                onChange={(e) => setCustomerDoc(e.target.value)}
-                className={`w-full bg-background border ${requiresDoc && customerDoc.length < 7 ? 'border-destructive ring-1 ring-destructive' : 'border-border'} rounded-lg p-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary placeholder:text-muted-foreground`}
-             />
-          </div>
-          
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <Button 
-              variant={paymentMethod === 'CASH' ? 'default' : 'outline'} 
-              className={`h-14 font-semibold border-border flex flex-col gap-1 ${paymentMethod === 'CASH' ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-background hover:bg-muted text-foreground'}`}
-              onClick={() => setPaymentMethod('CASH')}
-            >
-              <Banknote size={18} />
-              <span>Efectivo</span>
-            </Button>
-            <Button 
-              variant={paymentMethod === 'DEBIT' ? 'default' : 'outline'} 
-              className={`h-14 font-semibold border-border flex flex-col gap-1 ${paymentMethod === 'DEBIT' ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-background hover:bg-muted text-foreground'}`}
-              onClick={() => setPaymentMethod('DEBIT')}
-            >
-              <CreditCard size={18} />
-              <span>Débito</span>
-            </Button>
-            <Button 
-              variant={paymentMethod === 'CREDIT' ? 'default' : 'outline'} 
-              className={`h-14 font-semibold border-border flex flex-col gap-1 ${paymentMethod === 'CREDIT' ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-background hover:bg-muted text-foreground'}`}
-              onClick={() => setPaymentMethod('CREDIT')}
-            >
-              <CreditCard size={18} />
-              <span>Crédito</span>
-            </Button>
-          </div>
-          <Button 
-            size="lg"
-            className="w-full h-16 text-lg font-bold bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl shadow-md transition-all disabled:opacity-50"
-            disabled={!canConfirm}
-            onClick={handleConfirmSale}
-          >
-            {!paymentMethod ? 'Selecciona método de pago' : 
-             requiresDoc && customerDoc.length < 7 ? 'Ingrese DNI/CUIT (ARCA)' : 
-             'Facturar Venta'}
-          </Button>
+      <AnimatePresence>
+        {showCashModal && (
+          <CashChangePanel
+            total={total}
+            cashReceived={cashReceived}
+            changeToGive={changeToGive}
+            isCashInsufficient={isCashInsufficient}
+            inputRef={cashReceivedInputRef}
+            onCashReceivedChange={handleCashReceivedChange}
+            onQuickCash={applyQuickCash}
+            onClose={closeCashPanel}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showEmailInvoiceModal && (
+          <EmailInvoiceModal
+            dni={lastSaleDni}
+            onSend={handleEmailInvoiceSent}
+            onCancel={() => {
+              setShowEmailInvoiceModal(false);
+              setShowSuccess(true);
+              setTimeout(() => setShowSuccess(false), 3000);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeWeightProduct && (
+          <WeightNumpadModal
+            product={activeWeightProduct}
+            scaleConnected={scaleConnected}
+            scaleWeight={scaleWeight}
+            scaleError={scaleError}
+            isSimulatingScale={isSimulatingScale}
+            simulatedWeight={simulatedWeight}
+            onConnectScale={connectScale}
+            onToggleSimulation={() => setIsSimulatingScale(!isSimulatingScale)}
+            onValueChange={setTempWeight}
+            onConfirm={handleWeightConfirm}
+            onCancel={() => {
+              setActiveWeightProduct(null);
+              setIsSimulatingScale(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showPrintModal && saleToPrint && (
+          <SalePrintModal
+            sale={saleToPrint}
+            printingType={printingType}
+            onPrint={() => window.print()}
+            onClose={() => {
+              setShowPrintModal(false);
+              setSaleToPrint(null);
+              setPrintingType(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showMovementPrintModal && movementToPrint && (
+          <MovementPrintModal
+            movement={movementToPrint}
+            onPrint={() => window.print()}
+            onClose={() => {
+              setShowMovementPrintModal(false);
+              setMovementToPrint(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showPrintAllModal && printAllSession && (
+          <HistoryPrintModal
+            sales={salesHistory}
+            movements={movementsHistory}
+            currentSession={currentSession}
+            onPrint={() => window.print()}
+            onClose={() => {
+              setShowPrintAllModal(false);
+              setPrintAllSession(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {posActiveTab === 'cobros' && (
+        <CobrosTab
+          products={products}
+          currentSession={currentSession}
+          cart={cart}
+          total={total}
+          showSuccess={showSuccess}
+          paymentMethod={paymentMethod}
+          customerDoc={customerDoc}
+          requiresDoc={requiresDoc}
+          cashReceived={cashReceived}
+          changeToGive={changeToGive}
+          isCashInsufficient={isCashInsufficient}
+          canConfirm={!!canConfirm}
+          scaleConnected={scaleConnected}
+          scaleWeight={scaleWeight}
+          scaleError={scaleError}
+          customerDocInputRef={customerDocInputRef}
+          cashReceivedInputRef={cashReceivedInputRef}
+          onAddToCart={addToCart}
+          onConnectScale={connectScale}
+          onDisconnectScale={disconnectScale}
+          onClearCart={() => setCart([])}
+          onUpdateQuantity={updateQuantity}
+          onRemoveFromCart={removeFromCart}
+          onCustomerDocChange={setCustomerDoc}
+          onCustomerDocValidate={handleCustomerDocValidate}
+          onSelectCash={selectCash}
+          onSelectDebit={() => setPaymentMethod('DEBIT')}
+          onSelectCredit={() => setPaymentMethod('CREDIT')}
+          onSelectQr={handleQrPaymentStart}
+          onCloseCashPanel={closeCashPanel}
+          onCashReceivedChange={handleCashReceivedChange}
+          onQuickCash={applyQuickCash}
+          onConfirmSale={handleCerrarVentaClick}
+        />
+      )}
+
+      {posActiveTab === 'movimientos' && (
+        <MovementsTab
+          movementType={movementType}
+          outlayType={outlayType}
+          movementAmount={movementAmount}
+          movementDescription={movementDescription}
+          justification={justification}
+          workers={workers}
+          selectedWorkerId={selectedWorkerId}
+          movementAmountInputRef={movementAmountInputRef}
+          movementDescriptionInputRef={movementDescriptionInputRef}
+          justificationInputRef={justificationInputRef}
+          onMovementTypeChange={(type) => {
+            setMovementType(type);
+            if (type === 'INGRESO') setMovementDescription('');
+          }}
+          onOutlayTypeChange={setOutlayType}
+          onMovementTypeFromSelect={handleMovementTypeFromSelect}
+          onSubCategoryChange={handleSubCategoryChange}
+          onWorkerChange={handleWorkerChange}
+          onMovementAmountChange={setMovementAmount}
+          onMovementDescriptionChange={setMovementDescription}
+          onJustificationChange={(value) => {
+            setJustification(value);
+            setMovementDescription(value);
+          }}
+          onBackToCobros={() => {
+            setPosActiveTab('cobros');
+            setMovementAmount('');
+            setMovementDescription('');
+            setJustification('');
+          }}
+          onRegister={handleRegisterMovement}
+          canRegister={canRegisterMovement}
+        />
+      )}
+
+      {posActiveTab === 'historial' && (
+        <HistoryTab
+          salesHistory={salesHistory}
+          movementsHistory={movementsHistory}
+          onPrintAll={() => {
+            setPrintAllSession(true);
+            setShowPrintAllModal(true);
+            setTimeout(() => window.print(), 500);
+          }}
+          onPrintSale={(sale) => {
+            setSaleToPrint(sale);
+            setPrintingType(sale.comprobanteTipo ? 'factura' : 'recibo');
+            setShowPrintModal(true);
+            setTimeout(() => window.print(), 500);
+          }}
+          onPrintMovement={(mov) => {
+            setMovementToPrint(mov);
+            setShowMovementPrintModal(true);
+            setTimeout(() => window.print(), 500);
+          }}
+        />
+      )}
+
+      {showPrintModal && saleToPrint && (
+        <div className="hidden print:block print-ticket">
+          <TicketPrintPreview sale={saleToPrint} type={printingType} />
         </div>
-      </div>
+      )}
+
+      {showMovementPrintModal && movementToPrint && (
+        <div className="hidden print:block print-ticket">
+          <MovementPrintPreview movement={movementToPrint} />
+        </div>
+      )}
+
+      {showPrintAllModal && printAllSession && (
+        <div className="hidden print:block print-ticket">
+          <HistoryReportPrintPreview sales={salesHistory} movements={movementsHistory} currentSession={currentSession} />
+        </div>
+      )}
     </div>
   );
 }

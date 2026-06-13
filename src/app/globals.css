@@ -143,3 +143,57 @@
     @apply font-sans;
   }
 }
+
+@media print {
+  /* Ocultar elementos de navegación y de control de pantalla al imprimir */
+  .print\:hidden,
+  header,
+  nav,
+  button,
+  aside {
+    display: none !important;
+  }
+
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+
+  .print\:block {
+    display: block !important;
+  }
+
+  /* Optimización para ticket de 80mm */
+  .print-ticket {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    z-index: 99999 !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Ocultar el contenedor del layout y la página principal */
+  .flex.flex-col.h-screen {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  main {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Asegurarse de ocultar todo excepto la zona de impresión */
+  .no-print-container {
+    display: none !important;
+  }
+}
