@@ -33,7 +33,9 @@ export interface BakeTask {
   productName: string;
   quantityNeeded: number;
   status: 'PENDING' | 'BAKING' | 'COMPLETED';
-  requestedAt: Date;
+  requestedAt: Date | string;
+  startedAt?: string;
+  durationMinutes?: number;
 }
 
 export interface CashSession {
@@ -159,7 +161,7 @@ interface AppState {
   
   // Bake Queue
   bakeQueue: BakeTask[];
-  startBaking: (taskId: string) => void;
+  startBaking: (taskId: string, durationMinutes?: number) => void;
   finishBaking: (taskId: string) => void;
 
   // Cash Sessions & Movements State
@@ -246,9 +248,14 @@ export const useStore = create<AppState>()(
       clearAlerts: () => set({ alerts: [] }),
 
       bakeQueue: [],
-      startBaking: (taskId) => set((state) => ({
+      startBaking: (taskId, durationMinutes) => set((state) => ({
         bakeQueue: state.bakeQueue.map(task => 
-          task.id === taskId ? { ...task, status: 'BAKING' as const } : task
+          task.id === taskId ? { 
+            ...task, 
+            status: 'BAKING' as const,
+            startedAt: new Date().toISOString(),
+            durationMinutes: durationMinutes || 15
+          } : task
         )
       })),
       finishBaking: (taskId) => set((state) => {
@@ -460,7 +467,7 @@ export const useStore = create<AppState>()(
           const cashierId = session?.cashierId || 'default-cashier-id';
 
           try {
-            await procesarVenta(
+            const res = await procesarVenta(
               tenantId,
               cashierId,
               saleItemsInput,
@@ -473,6 +480,9 @@ export const useStore = create<AppState>()(
               caeData?.numero,
               caeData?.qr
             );
+            if (res && !res.success) {
+              throw new Error(res.error);
+            }
           } catch (err) {
             console.error('Error al procesar la venta en el servidor, guardando en cola offline:', err);
             // Fallback en caso de error de conexión/servidor
@@ -509,7 +519,7 @@ export const useStore = create<AppState>()(
         // Procesar cada venta en orden cronológico
         for (const sale of pending) {
           try {
-            await procesarVenta(
+            const res = await procesarVenta(
               tenantId,
               cashierId,
               sale.items,
@@ -522,6 +532,9 @@ export const useStore = create<AppState>()(
               sale.numeroComprobante,
               sale.qrCodeData
             );
+            if (res && !res.success) {
+              throw new Error(res.error);
+            }
           } catch (err) {
             console.error('Error sincronizando venta:', err);
           }

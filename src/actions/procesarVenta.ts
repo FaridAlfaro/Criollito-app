@@ -135,12 +135,22 @@ export async function procesarVenta(
         }
       }
     });
-  } catch (err) {
-    console.error('[DB Error] procesarVenta falló:', err);
-    throw new Error('Database transaction failed: ' + (err instanceof Error ? err.message : String(err)));
-  }
 
-  revalidatePath('/pos');
-  revalidatePath('/baker');
-  revalidatePath('/supervisor');
+    revalidatePath('/pos');
+    revalidatePath('/baker');
+    revalidatePath('/supervisor');
+    return { success: true };
+  } catch (err) {
+    const isConnError = err instanceof Error && (
+      err.message.includes('connect ECONNREFUSED') ||
+      err.message.includes('5432') ||
+      err.message.includes('connection')
+    );
+    if (isConnError) {
+      console.warn('[DB Connection Warn] procesarVenta falló por error de conexión de base de datos:', err instanceof Error ? err.message : String(err));
+    } else {
+      console.error('[DB Error] procesarVenta falló:', err);
+    }
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

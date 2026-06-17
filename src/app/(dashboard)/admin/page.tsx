@@ -34,6 +34,7 @@ export default function AdminPage() {
     bakeQueue
   } = useStore();
 
+  const [selectedBranch, setSelectedBranch] = useState<'palermo' | 'recoleta' | 'belgrano'>('palermo');
   const [activeTab, setActiveTab] = useState<'operaciones' | 'turnos' | 'empleados'>('operaciones');
 
   // State for editing employee salary
@@ -56,12 +57,55 @@ export default function AdminPage() {
   };
 
   // 1. OPERATIONS DATA CALCULATIONS
+  const displayProducts = useMemo(() => {
+    if (selectedBranch === 'recoleta') {
+      return products.map(p => ({
+        ...p,
+        currentStock: p.id === '22222222-2222-2222-2222-222222222222' ? 4 : p.currentStock
+      }));
+    } else if (selectedBranch === 'belgrano') {
+      return products.map(p => ({
+        ...p,
+        currentStock: p.currentStock + 15
+      }));
+    }
+    return products;
+  }, [selectedBranch, products]);
+
   const lowStockProducts = useMemo(() => {
-    return products.filter(p => p.currentStock < p.minDailyStock);
-  }, [products]);
+    return displayProducts.filter(p => p.currentStock < p.minDailyStock);
+  }, [displayProducts]);
 
   // Cash session totals calculated reactively from store
   const cashSessionStats = useMemo(() => {
+    if (selectedBranch !== 'palermo') {
+      if (selectedBranch === 'recoleta') {
+        return {
+          initial: 12000,
+          totalCashSales: 45000,
+          totalDebitSales: 22000,
+          totalCreditSales: 12000,
+          totalQrSales: 15000,
+          totalSalesSum: 94000,
+          totalIngresos: 2000,
+          totalEgresos: 3000,
+          theoreticalAmount: 56000
+        };
+      } else { // belgrano
+        return {
+          initial: 18000,
+          totalCashSales: 55000,
+          totalDebitSales: 35000,
+          totalCreditSales: 15000,
+          totalQrSales: 20000,
+          totalSalesSum: 125000,
+          totalIngresos: 4000,
+          totalEgresos: 5000,
+          theoreticalAmount: 72000
+        };
+      }
+    }
+
     if (!currentSession) return null;
 
     const sessionStart = new Date(currentSession.openedAt);
@@ -114,7 +158,7 @@ export default function AdminPage() {
       totalEgresos,
       theoreticalAmount
     };
-  }, [currentSession, salesHistory, movementsHistory]);
+  }, [selectedBranch, currentSession, salesHistory, movementsHistory]);
 
   // Daily Shifts calculation
   const daysOfWeek = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'] as const;
@@ -140,6 +184,22 @@ export default function AdminPage() {
   }, []);
 
   const todayShifts = useMemo(() => {
+    if (selectedBranch !== 'palermo') {
+      if (selectedBranch === 'recoleta') {
+        return [
+          { id: 's-mock-1', employeeName: 'Mariana Administradora', employeeRole: 'supervisor', shiftType: 'morning' },
+          { id: 's-mock-2', employeeName: 'Pedro Panadero', employeeRole: 'panadero', shiftType: 'morning' },
+          { id: 's-mock-3', employeeName: 'Juan Perez', employeeRole: 'cajero', shiftType: 'afternoon' }
+        ];
+      } else { // belgrano
+        return [
+          { id: 's-mock-4', employeeName: 'Esteban Administrador', employeeRole: 'supervisor', shiftType: 'morning' },
+          { id: 's-mock-5', employeeName: 'Carlos Horno', employeeRole: 'panadero', shiftType: 'morning' },
+          { id: 's-mock-6', employeeName: 'María Repostera', employeeRole: 'panadero', shiftType: 'afternoon' },
+          { id: 's-mock-7', employeeName: 'Juan Cajero', employeeRole: 'cajero', shiftType: 'afternoon' }
+        ];
+      }
+    }
     return shifts.filter(s => s.day === todayName).map(s => {
       const emp = employees.find(e => e.id === s.employeeId);
       return {
@@ -148,7 +208,7 @@ export default function AdminPage() {
         employeeRole: emp ? emp.role : 'cajero'
       };
     });
-  }, [shifts, todayName, employees]);
+  }, [selectedBranch, shifts, todayName, employees]);
 
   // Employee extra hours & total salary calculations
   const employeeSalaries = useMemo(() => {
@@ -187,7 +247,18 @@ export default function AdminPage() {
     ];
   }, [cashSessionStats]);
 
+  const displayBakeQueue = useMemo(() => {
+    if (selectedBranch !== 'palermo') {
+      return [];
+    }
+    return bakeQueue;
+  }, [selectedBranch, bakeQueue]);
+
   const handleBakeRequest = (productId: string, name: string, qty: number) => {
+    if (selectedBranch !== 'palermo') {
+      triggerToast(`[Demo] Solicitud de ${qty} uds de ${name} para ${selectedBranch.toUpperCase()}`);
+      return;
+    }
     requestBakeTask(productId, qty);
     triggerToast(`Horneado solicitado: ${qty} uds de ${name}`);
   };
@@ -236,8 +307,26 @@ export default function AdminPage() {
 
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold font-heading text-slate-800 tracking-tight flex items-center gap-2">
-            Administración <span className="text-orange-500 text-sm font-semibold border border-orange-200 px-3 py-1 bg-orange-50 rounded-full">Sucursal Palermo</span>
+          <h1 className="text-3xl font-extrabold font-heading text-slate-800 tracking-tight flex items-center gap-3">
+            Administración
+            <select
+              value={selectedBranch}
+              onChange={(e) => {
+                const val = e.target.value as 'palermo' | 'recoleta' | 'belgrano';
+                setSelectedBranch(val);
+                const names = {
+                  palermo: 'Sucursal Palermo (Principal)',
+                  recoleta: 'Sucursal Recoleta',
+                  belgrano: 'Sucursal Belgrano'
+                };
+                triggerToast(`Cambiando a ${names[val]}...`);
+              }}
+              className="text-orange-500 text-sm font-semibold border border-orange-200 px-3 py-1.5 bg-orange-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer shadow-sm transition-all hover:bg-orange-100/30"
+            >
+              <option value="palermo">Sucursal Palermo (Principal)</option>
+              <option value="recoleta">Sucursal Recoleta</option>
+              <option value="belgrano">Sucursal Belgrano</option>
+            </select>
           </h1>
           <p className="text-sm text-slate-500 mt-1">Control diario de KPIs, turnos de empleados y sueldos de la sucursal.</p>
         </div>
@@ -307,7 +396,7 @@ export default function AdminPage() {
                   </span>
                 </div>
 
-                {currentSession && cashSessionStats ? (
+                { (currentSession || selectedBranch !== 'palermo') && cashSessionStats ? (
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between p-2 bg-slate-50 rounded-xl">
                       <span className="text-slate-500">Fondo Inicial:</span>
@@ -397,20 +486,20 @@ export default function AdminPage() {
                       <p className="text-xs text-slate-400">Cola de horneado en cocina</p>
                     </div>
                   </div>
-                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${bakeQueue.length > 0 ? 'bg-orange-100 text-orange-700' : 'bg-slate-105 bg-slate-100 text-slate-500'}`}>
-                    {bakeQueue.length} Ordenes
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${displayBakeQueue.length > 0 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {displayBakeQueue.length} Ordenes
                   </span>
                 </div>
 
                 <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {bakeQueue.length === 0 ? (
+                  {displayBakeQueue.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-8 text-center bg-slate-50 rounded-2xl">
                       <CheckCircle size={24} className="text-green-500 mb-1" />
                       <p className="text-xs font-bold text-slate-700">Sin Solicitudes Activas</p>
                       <p className="text-[10px] text-slate-400">Los panaderos están al día</p>
                     </div>
                   ) : (
-                    bakeQueue.map(t => (
+                    displayBakeQueue.map(t => (
                       <div key={t.id} className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-100">
                         <div>
                           <p className="font-bold text-xs text-slate-850">{t.productName}</p>
@@ -455,7 +544,7 @@ export default function AdminPage() {
                       </tr>
                     </thead>
                     <tbody className="text-xs divide-y divide-slate-100">
-                      {products.map(p => {
+                      {displayProducts.map(p => {
                         const expectedSales = EXPECTED_DAILY_SALES[p.id] || 40;
                         const isLow = p.currentStock < p.minDailyStock;
                         const qtyValue = bakeQuantities[p.id] || '';
