@@ -31,6 +31,7 @@ interface CobrosTabProps {
   onUpdateQuantity: (productId: string, delta: number) => void;
   onRemoveFromCart: (productId: string) => void;
   onCustomerDocChange: (value: string) => void;
+  onCustomerDocValidate: (value: string) => void;
   onSelectCash: () => void;
   onSelectDebit: () => void;
   onSelectCredit: () => void;

@@ -81,8 +81,24 @@ export interface PendingSale {
 }
 
 export interface UserSession {
-  role: 'admin' | 'cajero' | 'panadero' | 'dueño';
+  role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser';
   name: string;
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser';
+  baseSalary: number; 
+  hourlyRate: number;
+}
+
+export interface Shift {
+  id: string;
+  employeeId: string;
+  day: 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado' | 'Domingo';
+  shiftType: 'morning' | 'afternoon' | 'night';
 }
 
 // Configuración de almacenamiento personalizado usando IndexedDB (idb-keyval)
@@ -161,8 +177,8 @@ interface AppState {
 
   // User Auth State
   currentUser: UserSession | null;
-  loginUser: (role: 'admin' | 'cajero' | 'panadero' | 'dueño', pin: string) => boolean;
-  logoutUser: () => void;
+  loginUser: (role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser', pin: string) => boolean;
+  logoutUser: () => void; 
 
   // Global Actions
   processSale: (
@@ -173,6 +189,14 @@ interface AppState {
     caeData?: { cae: string; expiration: string; numero: number; qr: string }
   ) => Promise<void>;
   syncOfflineSales: () => Promise<void>;
+
+  // Staff & Shifts
+  employees: Employee[];
+  shifts: Shift[];
+  updateEmployeeSalary: (id: string, baseSalary: number, hourlyRate: number) => void;
+  assignShift: (employeeId: string, day: 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado' | 'Domingo', shiftType: 'morning' | 'afternoon' | 'night') => void;
+  removeShift: (shiftId: string) => void;
+  requestBakeTask: (productId: string, quantityNeeded: number) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -183,6 +207,23 @@ export const useStore = create<AppState>()(
         { id: '22222222-2222-2222-2222-222222222222', name: 'Pan Francés', type: 'WEIGHT', price: 2000, currentStock: 15, minDailyStock: 10, optimalBatchSize: 10, barcode: '779123456002' },
         { id: '33333333-3333-3333-3333-333333333333', name: 'Pan Mignon', type: 'WEIGHT', price: 2500, currentStock: 8, minDailyStock: 5, optimalBatchSize: 5, barcode: '779123456003' },
         { id: '44444444-4444-4444-4444-444444444444', name: 'Facturas Surtidas', type: 'UNIT', price: 600, currentStock: 80, minDailyStock: 40, optimalBatchSize: 48, barcode: '779123456004' },
+      ],
+      
+      employees: [
+        { id: 'emp-1', name: 'Juan Perez', email: 'juan.perez@criollito.com', role: 'cajero', baseSalary: 180000, hourlyRate: 1200 },
+        { id: 'emp-2', name: 'Carlos Horno', email: 'carlos.horno@criollito.com', role: 'panadero', baseSalary: 220000, hourlyRate: 1500 },
+        { id: 'emp-3', name: 'Pedro Panadero', email: 'pedro@criollito.com', role: 'panadero', baseSalary: 210000, hourlyRate: 1450 },
+        { id: 'emp-4', name: 'María Repostera', email: 'maria@criollito.com', role: 'panadero', baseSalary: 200000, hourlyRate: 1400 },
+        { id: 'emp-5', name: 'Juan Cajero', email: 'juan@criollito.com', role: 'cajero', baseSalary: 175000, hourlyRate: 1150 }
+      ],
+      shifts: [
+        { id: 's-1', employeeId: 'emp-1', day: 'Lunes', shiftType: 'morning' },
+        { id: 's-2', employeeId: 'emp-2', day: 'Lunes', shiftType: 'afternoon' },
+        { id: 's-3', employeeId: 'emp-3', day: 'Martes', shiftType: 'morning' },
+        { id: 's-4', employeeId: 'emp-5', day: 'Miércoles', shiftType: 'morning' },
+        { id: 's-5', employeeId: 'emp-4', day: 'Jueves', shiftType: 'afternoon' },
+        { id: 's-6', employeeId: 'emp-2', day: 'Viernes', shiftType: 'morning' },
+        { id: 's-7', employeeId: 'emp-1', day: 'Sábado', shiftType: 'morning' },
       ],
       
       alerts: [],
@@ -300,7 +341,8 @@ export const useStore = create<AppState>()(
             admin: 'Administrador',
             cajero: 'Juan Cajero',
             panadero: 'Pedro Panadero',
-            dueño: 'Dueño Negocio'
+            dueño: 'Dueño Negocio',
+            fuser: 'Fuser'
           };
           set({ currentUser: { role, name: names[role] || role.toUpperCase() } });
           return true;
@@ -487,7 +529,59 @@ export const useStore = create<AppState>()(
 
         set({ pendingSales: [] });
         console.log('[Sync] Sincronización de ventas completada con éxito.');
-      }
+      },
+
+      updateEmployeeSalary: (id, baseSalary, hourlyRate) => set((state) => ({
+        employees: state.employees.map(emp => 
+          emp.id === id ? { ...emp, baseSalary, hourlyRate } : emp
+        )
+      })),
+      
+      assignShift: (employeeId, day, shiftType) => set((state) => {
+        const exists = state.shifts.some(s => s.employeeId === employeeId && s.day === day && s.shiftType === shiftType);
+        if (exists) return state;
+        const newShift = {
+          id: crypto.randomUUID(),
+          employeeId,
+          day,
+          shiftType
+        };
+        return {
+          shifts: [...state.shifts, newShift]
+        };
+      }),
+
+      removeShift: (shiftId) => set((state) => ({
+        shifts: state.shifts.filter(s => s.id !== shiftId)
+      })),
+
+      requestBakeTask: (productId, quantityNeeded) => set((state) => {
+        const prod = state.products.find(p => p.id === productId);
+        if (!prod) return state;
+        const inQueue = state.bakeQueue.some(t => t.productId === productId && t.status === 'PENDING');
+        if (inQueue) return state;
+        const newTask = {
+          id: crypto.randomUUID(),
+          productId,
+          productName: prod.name,
+          quantityNeeded,
+          status: 'PENDING' as const,
+          requestedAt: new Date()
+        };
+        return {
+          bakeQueue: [...state.bakeQueue, newTask],
+          alerts: [
+            {
+              id: crypto.randomUUID(),
+              type: 'SYSTEM' as const,
+              message: `Solicitud manual de horneado: ${prod.name} (${quantityNeeded} ${prod.type === 'WEIGHT' ? 'kg' : 'uds'})`,
+              isRead: false,
+              createdAt: new Date(),
+            },
+            ...state.alerts
+          ]
+        };
+      })
     }),
     {
       name: 'criollito-store-persisted',
@@ -499,6 +593,8 @@ export const useStore = create<AppState>()(
         currentSession: state.currentSession,
         pendingSales: state.pendingSales,
         currentUser: state.currentUser,
+        employees: state.employees,
+        shifts: state.shifts,
       }),
     }
   )

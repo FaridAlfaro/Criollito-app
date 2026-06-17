@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Store, UserCog, ChefHat, LayoutDashboard, ArrowRight, Lock, LogOut } from 'lucide-react';
+import { Store, UserCog, ChefHat, LayoutDashboard, ArrowRight, Lock, LogOut, Printer } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -44,11 +44,20 @@ const ROLES = [
     color: 'bg-red-500',
     hover: 'hover:bg-red-600',
   },
+  {
+    id: 'fuser',
+    title: 'Fuser',
+    description: 'Fuser de productos.',
+    icon: Printer,
+    href: '/fuser',
+    color: 'bg-purple-500',
+    hover: 'hover:bg-purple-600',
+  },
 ];
 
 export default function Home() {
   const { currentUser, loginUser, logoutUser } = useStore();
-  const [selectedRole, setSelectedRole] = useState<'admin' | 'cajero' | 'panadero' | 'dueño'>('cajero');
+  const [selectedRole, setSelectedRole] = useState<'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser'>('cajero');
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -110,12 +119,13 @@ export default function Home() {
               <select 
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                 value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value as 'admin' | 'cajero' | 'panadero' | 'dueño')}
+                onChange={(e) => setSelectedRole(e.target.value as 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser')}
               >
                 <option value="cajero">Cajero (POS)</option>
                 <option value="admin">Administrador (Admin)</option>
                 <option value="dueño">Dueño (Supervisor)</option>
                 <option value="panadero">Panadero</option>
+                <option value="fuser">Fuser</option>
               </select>
             </div>
 
@@ -195,8 +205,9 @@ export default function Home() {
             (currentUser.role === 'admin' && role.id === 'admin') ||
             (currentUser.role === 'dueño' && (role.id === 'dueño' || role.id === 'admin')) ||
             (currentUser.role === 'cajero' && role.id === 'cajero') ||
-            (currentUser.role === 'panadero' && role.id === 'panadero');
-
+            (currentUser.role === 'panadero' && role.id === 'panadero') ||
+            (currentUser.role === 'fuser' && (role.id === 'fuser' || role.id === 'admin' || role.id === 'dueño' || role.id === 'cajero' || role.id === 'panadero'));
+            
           return (
             <div key={role.id} className="relative flex">
               {isAllowed ? (

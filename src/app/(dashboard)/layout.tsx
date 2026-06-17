@@ -65,7 +65,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     (currentUser.role === 'admin' && pathname.startsWith('/admin')) ||
     (currentUser.role === 'dueño' && (pathname.startsWith('/supervisor') || pathname.startsWith('/admin'))) ||
     (currentUser.role === 'cajero' && pathname.startsWith('/pos')) ||
-    (currentUser.role === 'panadero' && pathname.startsWith('/baker'));
+    (currentUser.role === 'panadero' && pathname.startsWith('/baker')) ||
+    (currentUser.role === 'fuser' && (pathname.startsWith('/fuser') || pathname.startsWith('/admin') || pathname.startsWith('/supervisor') || pathname.startsWith('/pos') || pathname.startsWith('/baker')));
 
   if (!isAllowed) {
     return (

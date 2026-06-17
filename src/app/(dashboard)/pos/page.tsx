@@ -1,7 +1,7 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useStore, Product } from '@/store/useStore';
 import { useSerialScale } from '@/hooks/useSerialScale';
 import { getBranchWorkers } from '@/actions/cashSessions';
@@ -54,6 +54,7 @@ export default function POSPage() {
   const [customerEmailStatus, setCustomerEmailStatus] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(true);
   const [isPrinterConnected, setIsPrinterConnected] = useState(false);
+  const [stockAlert, setStockAlert] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
 
   const customerDocInputRef = useRef<HTMLInputElement>(null);
   const initialAmountInputRef = useRef<HTMLInputElement>(null);
@@ -189,8 +190,18 @@ export default function POSPage() {
         return;
       }
       const qtyToAdd = customQuantity ?? 1;
+      
+      let isStockValid = true;
+      let stockLimitMsg = '';
+
       setCart((prev) => {
         const existing = prev.find((item) => item.product.id === product.id);
+        const currentCartQty = existing ? existing.quantity : 0;
+        if (currentCartQty + qtyToAdd > product.currentStock) {
+          isStockValid = false;
+          stockLimitMsg = `Stock insuficiente para ${product.name}. Disponible: ${product.currentStock}. En carrito: ${currentCartQty}`;
+          return prev;
+        }
         if (existing) {
           return prev.map((item) =>
             item.product.id === product.id
@@ -200,6 +211,11 @@ export default function POSPage() {
         }
         return [...prev, { product, quantity: qtyToAdd }];
       });
+
+      if (!isStockValid) {
+        setStockAlert({ show: true, message: stockLimitMsg });
+        setTimeout(() => setStockAlert({ show: false, message: '' }), 3000);
+      }
     },
     [scaleConnected, scaleWeight]
   );
@@ -370,15 +386,28 @@ export default function POSPage() {
   };
 
   const updateQuantity = (productId: string, delta: number) => {
+    let isStockValid = true;
+    let stockLimitMsg = '';
+
     setCart((prev) =>
       prev.map((item) => {
         if (item.product.id === productId) {
           const newQ = parseFloat((item.quantity + delta).toFixed(3));
+          if (delta > 0 && newQ > item.product.currentStock) {
+            isStockValid = false;
+            stockLimitMsg = `No se puede agregar más. Stock disponible de ${item.product.name}: ${item.product.currentStock}`;
+            return item;
+          }
           return newQ > 0 ? { ...item, quantity: newQ } : item;
         }
         return item;
       })
     );
+
+    if (!isStockValid) {
+      setStockAlert({ show: true, message: stockLimitMsg });
+      setTimeout(() => setStockAlert({ show: false, message: '' }), 3000);
+    }
   };
 
   const removeFromCart = (productId: string) => {
@@ -465,11 +494,16 @@ export default function POSPage() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
-        if (e.key === 'Enter' || e.key === 'Escape') {
+      const isInput = (e.target as HTMLElement).tagName === 'INPUT';
+      const isTextarea = (e.target as HTMLElement).tagName === 'TEXTAREA';
+
+      if (isInput || isTextarea) {
+        if (e.key === 'Escape') {
           (e.target as HTMLElement).blur();
+          return;
         }
-        return;
+        if (isTextarea) return;
+        if (e.key !== 'Enter') return;
       }
 
       const key = e.key;
@@ -542,7 +576,7 @@ export default function POSPage() {
         }
       }
 
-      if (posActiveTab === 'cobros' && !showCheckoutModal && !showQrModal && !showPrintModal && !showCashModal) {
+      if (posActiveTab === 'cobros' && !showCheckoutModal && !showQrModal && !showPrintModal && !showOpenModal && !showCloseModal && !showSummaryModal) {
         const k = key.toLowerCase();
 
         if (k === 'm') {
@@ -663,7 +697,7 @@ export default function POSPage() {
           }
         }
 
-        if ((key === 'Enter' || key === ' ') && canConfirm) {
+        if ((key === 'Enter' || key === ' ') && canConfirm && barcodeBuffer.length === 0 && !showCashModal) {
           e.preventDefault();
           handleCerrarVentaClick();
           return;
@@ -760,6 +794,20 @@ export default function POSPage() {
       />
 
       <AnimatePresence>
+        {stockAlert.show && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="absolute top-24 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white font-bold px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-red-500"
+          >
+            <span>⚠️</span>
+            <span>{stockAlert.message}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {showOpenModal && (
           <OpenSessionModal
             initialAmountInput={initialAmountInput}
@@ -830,6 +878,9 @@ export default function POSPage() {
             onCashReceivedChange={handleCashReceivedChange}
             onQuickCash={applyQuickCash}
             onClose={closeCashPanel}
+            onConfirm={() => {
+              closeCashPanel();
+            }}
           />
         )}
       </AnimatePresence>

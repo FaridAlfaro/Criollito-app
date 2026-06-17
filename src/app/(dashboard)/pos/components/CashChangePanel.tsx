@@ -15,6 +15,7 @@ interface CashChangePanelProps {
   onCashReceivedChange: (value: string) => void;
   onQuickCash: (amount: number) => void;
   onClose: () => void;
+  onConfirm: () => void;
 }
 
 export function CashChangePanel({
@@ -26,6 +27,7 @@ export function CashChangePanel({
   onCashReceivedChange,
   onQuickCash,
   onClose,
+  onConfirm,
 }: CashChangePanelProps) {
   return (
     <AnimatePresence>
@@ -68,7 +70,7 @@ export function CashChangePanel({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !isCashInsufficient && cashReceived !== '') {
                 e.preventDefault();
-                onClose();
+                onConfirm();
               }
             }}
             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 font-mono text-3xl text-center text-slate-800 focus:ring-2 focus:ring-orange-500 focus:outline-none font-bold shadow-inner mb-3"
@@ -105,7 +107,7 @@ export function CashChangePanel({
 
               {!isCashInsufficient && (
                 <Button
-                  onClick={onClose}
+                  onClick={onConfirm}
                   className="w-full mt-3 h-12 text-base font-bold bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md transition-all mt-4"
                 >
                   Confirmar Efectivo
