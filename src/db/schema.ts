@@ -14,7 +14,7 @@ import { relations } from "drizzle-orm";
 // 1. ENUMS
 // ==========================================
 
-export const roleEnum = pgEnum("role", ["ADMIN", "SUPERVISOR", "BAKER", "CASHIER"]);
+export const roleEnum = pgEnum("role", ["SUPER_ADMIN", "ADMIN", "SUPERVISOR", "BAKER", "CASHIER"]);
 export const productTypeEnum = pgEnum("product_type", ["UNIT", "WEIGHT"]);
 export const paymentMethodEnum = pgEnum("payment_method", ["CASH", "DEBIT", "CREDIT", "QR"]);
 export const bakeStatusEnum = pgEnum("bake_status", ["PENDING", "BAKING", "COMPLETED"]);
@@ -34,6 +34,7 @@ export const tenants = pgTable("tenants", {
   businessName: text("business_name"),
   cuit: text("cuit"),
   puntoVenta: integer("punto_venta").default(1),
+  plan: integer("plan").default(14).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -142,6 +143,17 @@ export const alerts = pgTable("alerts", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const subscriptionPayments = pgTable("subscription_payments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  period: text("period").notNull(),
+  status: text("status").notNull().default("PENDING"),
+  dueDate: timestamp("due_date").notNull(),
+  paidAt: timestamp("paid_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // ==========================================
 // 3. RELACIONES
 // ==========================================
@@ -154,6 +166,7 @@ export const tenantsRelations = relations(tenants, ({ many }) => ({
   alerts: many(alerts),
   cashSessions: many(cashSessions),
   cashMovements: many(cashMovements),
+  subscriptionPayments: many(subscriptionPayments),
 }));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -197,4 +210,8 @@ export const saleItemsRelations = relations(saleItems, ({ one }) => ({
 export const bakeQueueRelations = relations(bakeQueue, ({ one }) => ({
   tenant: one(tenants, { fields: [bakeQueue.tenantId], references: [tenants.id] }),
   product: one(products, { fields: [bakeQueue.productId], references: [products.id] }),
+}));
+
+export const subscriptionPaymentsRelations = relations(subscriptionPayments, ({ one }) => ({
+  tenant: one(tenants, { fields: [subscriptionPayments.tenantId], references: [tenants.id] }),
 }));

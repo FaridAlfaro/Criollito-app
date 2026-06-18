@@ -7,6 +7,7 @@ import { useStore } from '@/store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { clearSessionAction } from '@/actions/auth';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { alerts, markAsRead, currentUser, logoutUser, posActiveTab, setPosActiveTab } = useStore();
@@ -62,6 +63,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // cajero -> /pos
   // panadero -> /baker
   const isAllowed = 
+    currentUser.role === 'superadmin' ||
     (currentUser.role === 'admin' && pathname.startsWith('/admin')) ||
     (currentUser.role === 'dueño' && (pathname.startsWith('/supervisor') || pathname.startsWith('/admin'))) ||
     (currentUser.role === 'cajero' && pathname.startsWith('/pos')) ||
@@ -201,8 +203,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Botón Logout */}
           <button 
-            onClick={() => {
+            onClick={async () => {
               logoutUser();
+              await clearSessionAction();
               router.push('/');
             }}
             className="flex items-center justify-center p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all"

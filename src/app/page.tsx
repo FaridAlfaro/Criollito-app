@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Store, UserCog, ChefHat, LayoutDashboard, ArrowRight, Lock, LogOut, Printer } from 'lucide-react';
+import { Store, UserCog, ChefHat, LayoutDashboard, ArrowRight, Lock, LogOut, Printer, ShieldAlert } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import { syncSessionAction, clearSessionAction } from '@/actions/auth';
 
 const ROLES = [
   {
@@ -53,11 +54,20 @@ const ROLES = [
     color: 'bg-purple-500',
     hover: 'hover:bg-purple-600',
   },
+  {
+    id: 'superadmin',
+    title: 'Super Admin',
+    description: 'Alta de clientes y control global del SaaS.',
+    icon: ShieldAlert,
+    href: '/superadmin',
+    color: 'bg-indigo-600',
+    hover: 'hover:bg-indigo-700',
+  },
 ];
 
 export default function Home() {
   const { currentUser, loginUser, logoutUser } = useStore();
-  const [selectedRole, setSelectedRole] = useState<'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser'>('cajero');
+  const [selectedRole, setSelectedRole] = useState<'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser' | 'superadmin'>('cajero');
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -69,12 +79,14 @@ export default function Home() {
     return () => clearTimeout(t);
   }, []);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(false);
     
     const success = loginUser(selectedRole, pin);
-    if (!success) {
+    if (success) {
+      await syncSessionAction(selectedRole);
+    } else {
       setError(true);
       setPin('');
     }
@@ -119,13 +131,14 @@ export default function Home() {
               <select 
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                 value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value as 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser')}
+                onChange={(e) => setSelectedRole(e.target.value as 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser' | 'superadmin')}
               >
                 <option value="cajero">Cajero (POS)</option>
                 <option value="admin">Administrador (Admin)</option>
                 <option value="dueño">Dueño (Supervisor)</option>
                 <option value="panadero">Panadero</option>
                 <option value="fuser">Fuser</option>
+                <option value="superadmin">Super Admin (SaaS)</option>
               </select>
             </div>
 
@@ -181,7 +194,10 @@ export default function Home() {
           <p className="text-sm font-bold text-slate-800">{currentUser.name} ({currentUser.role.toUpperCase()})</p>
         </div>
         <button 
-          onClick={logoutUser}
+          onClick={async () => {
+            logoutUser();
+            await clearSessionAction();
+          }}
           className="p-2.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
           title="Cerrar Sesión"
         >
@@ -202,6 +218,7 @@ export default function Home() {
         {ROLES.map((role) => {
           // Validar accesos según el rol de la sesión
           const isAllowed = 
+            (currentUser.role === 'superadmin' && role.id === 'superadmin') ||
             (currentUser.role === 'admin' && role.id === 'admin') ||
             (currentUser.role === 'dueño' && (role.id === 'dueño' || role.id === 'admin')) ||
             (currentUser.role === 'cajero' && role.id === 'cajero') ||

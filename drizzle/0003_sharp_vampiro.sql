@@ -1,0 +1,1 @@
+ALTER TABLE "tenants" ADD COLUMN "plan" integer DEFAULT 14 NOT NULL;

@@ -83,7 +83,7 @@ export interface PendingSale {
 }
 
 export interface UserSession {
-  role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser';
+  role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser' | 'superadmin';
   name: string;
 }
 
@@ -91,7 +91,7 @@ export interface Employee {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser';
+  role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser' | 'superadmin';
   baseSalary: number; 
   hourlyRate: number;
 }
@@ -179,7 +179,7 @@ interface AppState {
 
   // User Auth State
   currentUser: UserSession | null;
-  loginUser: (role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser', pin: string) => boolean;
+  loginUser: (role: 'admin' | 'cajero' | 'panadero' | 'dueño' | 'fuser' | 'superadmin', pin: string) => boolean;
   logoutUser: () => void; 
 
   // Global Actions
@@ -349,7 +349,8 @@ export const useStore = create<AppState>()(
             cajero: 'Juan Cajero',
             panadero: 'Pedro Panadero',
             dueño: 'Dueño Negocio',
-            fuser: 'Fuser'
+            fuser: 'Fuser',
+            superadmin: 'Super Administrador'
           };
           set({ currentUser: { role, name: names[role] || role.toUpperCase() } });
           return true;
