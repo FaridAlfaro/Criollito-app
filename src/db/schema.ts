@@ -22,7 +22,8 @@ export const alertTypeEnum = pgEnum("alert_type", ["LOW_STOCK", "SYSTEM"]);
 export const docTypeEnum = pgEnum("doc_type", ["DNI", "CUIT", "CUIL", "PASAPORTE", "CONSUMIDOR_FINAL"]);
 export const comprobanteTypeEnum = pgEnum("comprobante_type", ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO"]);
 export const movementTypeEnum = pgEnum("movement_type", ["INGRESO", "EGRESO_PROVEEDOR", "EGRESO_SUELDO", "EGRESO_VARIOS"]);
-
+export const shiftTypeEnum = pgEnum("shift_type", ["morning", "afternoon", "night"]);
+export const dayOfWeekEnum = pgEnum("day_of_week", ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]);
 
 // ==========================================
 // 2. TABLAS PRINCIPALES (Multi-tenant)
@@ -39,9 +40,28 @@ export const tenants = pgTable("tenants", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ==========================================
+// 3. SUCURSALES (Branches) - Multi-branch por Tenant
+// ==========================================
+
+export const branches = pgTable("branches", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  name: text("name").notNull(),
+  address: text("address"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ==========================================
+// 4. USUARIOS Y EMPLEADOS
+// ==========================================
+
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
@@ -50,9 +70,41 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Tabla de empleados (datos de RRHH separados de la tabla de autenticación users)
+export const employees = pgTable("employees", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  role: roleEnum("role").notNull().default("CASHIER"),
+  baseSalary: decimal("base_salary", { precision: 10, scale: 2 }).notNull().default("0"),
+  hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }).notNull().default("0"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Tabla de turnos (horarios por empleado)
+export const shifts = pgTable("shifts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "cascade" }),
+  employeeId: uuid("employee_id").references(() => employees.id, { onDelete: "cascade" }).notNull(),
+  day: dayOfWeekEnum("day").notNull(),
+  shiftType: shiftTypeEnum("shift_type").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ==========================================
+// 5. SESIONES DE CAJA Y MOVIMIENTOS
+// ==========================================
+
 export const cashSessions = pgTable("cash_sessions", {
   id: uuid("id").defaultRandom().primaryKey(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
   cashierId: uuid("cashier_id").references(() => users.id).notNull(),
   openedAt: timestamp("opened_at").defaultNow().notNull(),
   closedAt: timestamp("closed_at"),
@@ -70,6 +122,7 @@ export const cashSessions = pgTable("cash_sessions", {
 export const cashMovements = pgTable("cash_movements", {
   id: uuid("id").defaultRandom().primaryKey(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
   cashSessionId: uuid("cash_session_id").references(() => cashSessions.id, { onDelete: "cascade" }).notNull(),
   cashierId: uuid("cashier_id").references(() => users.id).notNull(),
   type: movementTypeEnum("type").notNull(),
@@ -78,9 +131,14 @@ export const cashMovements = pgTable("cash_movements", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ==========================================
+// 6. PRODUCTOS
+// ==========================================
+
 export const products = pgTable("products", {
   id: uuid("id").defaultRandom().primaryKey(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   type: productTypeEnum("type").notNull(), 
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
@@ -92,9 +150,14 @@ export const products = pgTable("products", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ==========================================
+// 7. VENTAS
+// ==========================================
+
 export const sales = pgTable("sales", {
   id: uuid("id").defaultRandom().primaryKey(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
   cashSessionId: uuid("cash_session_id").references(() => cashSessions.id),
   cashierId: uuid("cashier_id").references(() => users.id).notNull(),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
@@ -123,9 +186,14 @@ export const saleItems = pgTable("sale_items", {
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
 });
 
+// ==========================================
+// 8. COLA DE HORNEADO
+// ==========================================
+
 export const bakeQueue = pgTable("bake_queue", {
   id: uuid("id").defaultRandom().primaryKey(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
   productId: uuid("product_id").references(() => products.id).notNull(),
   quantityNeeded: decimal("quantity_needed", { precision: 10, scale: 3 }).notNull(),
   status: bakeStatusEnum("status").notNull().default("PENDING"),
@@ -134,14 +202,26 @@ export const bakeQueue = pgTable("bake_queue", {
   completedAt: timestamp("completed_at"),
 });
 
+// ==========================================
+// 9. ALERTAS - Con lógica Multi-sucursal
+// ==========================================
+// Regla de negocio:
+//   targetBranchId = NULL  → alerta global para TODAS las sucursales del tenant
+//   targetBranchId = <id>  → alerta exclusiva para esa sucursal específica
+
 export const alerts = pgTable("alerts", {
   id: uuid("id").defaultRandom().primaryKey(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  targetBranchId: uuid("target_branch_id").references(() => branches.id, { onDelete: "cascade" }),
   type: alertTypeEnum("type").notNull(),
   message: text("message").notNull(),
   isRead: boolean("is_read").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ==========================================
+// 10. SUSCRIPCIONES
+// ==========================================
 
 export const subscriptionPayments = pgTable("subscription_payments", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -155,11 +235,14 @@ export const subscriptionPayments = pgTable("subscription_payments", {
 });
 
 // ==========================================
-// 3. RELACIONES
+// 11. RELACIONES
 // ==========================================
 
 export const tenantsRelations = relations(tenants, ({ many }) => ({
+  branches: many(branches),
   users: many(users),
+  employees: many(employees),
+  shifts: many(shifts),
   products: many(products),
   sales: many(sales),
   bakeQueue: many(bakeQueue),
@@ -169,15 +252,44 @@ export const tenantsRelations = relations(tenants, ({ many }) => ({
   subscriptionPayments: many(subscriptionPayments),
 }));
 
+export const branchesRelations = relations(branches, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [branches.tenantId], references: [tenants.id] }),
+  users: many(users),
+  employees: many(employees),
+  shifts: many(shifts),
+  products: many(products),
+  sales: many(sales),
+  bakeQueue: many(bakeQueue),
+  cashSessions: many(cashSessions),
+  cashMovements: many(cashMovements),
+  alerts: many(alerts),
+}));
+
 export const usersRelations = relations(users, ({ one, many }) => ({
   tenant: one(tenants, { fields: [users.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [users.branchId], references: [branches.id] }),
+  employee: one(employees, { fields: [users.id], references: [employees.userId] }),
   sales: many(sales),
   cashSessions: many(cashSessions),
   cashMovements: many(cashMovements),
 }));
 
+export const employeesRelations = relations(employees, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [employees.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [employees.branchId], references: [branches.id] }),
+  user: one(users, { fields: [employees.userId], references: [users.id] }),
+  shifts: many(shifts),
+}));
+
+export const shiftsRelations = relations(shifts, ({ one }) => ({
+  tenant: one(tenants, { fields: [shifts.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [shifts.branchId], references: [branches.id] }),
+  employee: one(employees, { fields: [shifts.employeeId], references: [employees.id] }),
+}));
+
 export const cashSessionsRelations = relations(cashSessions, ({ one, many }) => ({
   tenant: one(tenants, { fields: [cashSessions.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [cashSessions.branchId], references: [branches.id] }),
   cashier: one(users, { fields: [cashSessions.cashierId], references: [users.id] }),
   sales: many(sales),
   movements: many(cashMovements),
@@ -185,18 +297,21 @@ export const cashSessionsRelations = relations(cashSessions, ({ one, many }) => 
 
 export const cashMovementsRelations = relations(cashMovements, ({ one }) => ({
   tenant: one(tenants, { fields: [cashMovements.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [cashMovements.branchId], references: [branches.id] }),
   session: one(cashSessions, { fields: [cashMovements.cashSessionId], references: [cashSessions.id] }),
   cashier: one(users, { fields: [cashMovements.cashierId], references: [users.id] }),
 }));
 
 export const productsRelations = relations(products, ({ one, many }) => ({
   tenant: one(tenants, { fields: [products.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [products.branchId], references: [branches.id] }),
   saleItems: many(saleItems),
   bakeQueue: many(bakeQueue),
 }));
 
 export const salesRelations = relations(sales, ({ one, many }) => ({
   tenant: one(tenants, { fields: [sales.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [sales.branchId], references: [branches.id] }),
   cashier: one(users, { fields: [sales.cashierId], references: [users.id] }),
   session: one(cashSessions, { fields: [sales.cashSessionId], references: [cashSessions.id] }),
   items: many(saleItems),
@@ -209,7 +324,13 @@ export const saleItemsRelations = relations(saleItems, ({ one }) => ({
 
 export const bakeQueueRelations = relations(bakeQueue, ({ one }) => ({
   tenant: one(tenants, { fields: [bakeQueue.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [bakeQueue.branchId], references: [branches.id] }),
   product: one(products, { fields: [bakeQueue.productId], references: [products.id] }),
+}));
+
+export const alertsRelations = relations(alerts, ({ one }) => ({
+  tenant: one(tenants, { fields: [alerts.tenantId], references: [tenants.id] }),
+  targetBranch: one(branches, { fields: [alerts.targetBranchId], references: [branches.id] }),
 }));
 
 export const subscriptionPaymentsRelations = relations(subscriptionPayments, ({ one }) => ({

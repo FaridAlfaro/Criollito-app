@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:seed": "dotenv -e .env -- tsx src/scripts/seed-demo.ts",
+    "db:migrate": "drizzle-kit migrate",
+    "db:reset-passwords": "tsx src/scripts/reset-passwords.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

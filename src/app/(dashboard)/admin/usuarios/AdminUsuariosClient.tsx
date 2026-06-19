@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createEmployee } from '@/actions/employees';
+import { fetchBranches } from '@/actions/branches';
 import { Button } from '@/components/ui/button';
-import { 
-  UserPlus, UserCheck, Mail, Lock, Plus, 
-  Sparkles, CheckCircle2, AlertTriangle, Users 
+import {
+  UserPlus, UserCheck, Mail, Lock, Plus,
+  Sparkles, CheckCircle2, AlertTriangle, Users, MapPin, RefreshCw, Building2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -19,6 +20,12 @@ interface Employee {
   createdAt: Date;
 }
 
+interface Branch {
+  id: string;
+  name: string;
+  address: string | null;
+}
+
 interface AdminUsuariosClientProps {
   initialEmployees: Employee[];
   tenantName: string;
@@ -26,20 +33,42 @@ interface AdminUsuariosClientProps {
 
 export default function AdminUsuariosClient({ initialEmployees, tenantName }: AdminUsuariosClientProps) {
   const [employeesList, setEmployeesList] = useState<Employee[]>(initialEmployees);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [isBranchesLoading, setIsBranchesLoading] = useState(true);
 
   // Form states
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'cajero' | 'panadero'>('cajero');
+  const [role, setRole] = useState<'CASHIER' | 'BAKER'>('CASHIER');
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
 
   // Status states
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    async function loadBranches() {
+      try {
+        const list = await fetchBranches();
+        setBranches(list as Branch[]);
+        if (list.length > 0) setSelectedBranchId(list[0].id);
+      } catch (err) {
+        console.error('[AdminUsuarios] Error cargando sucursales:', err);
+      } finally {
+        setIsBranchesLoading(false);
+      }
+    }
+    loadBranches();
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if ((role === 'CASHIER' || role === 'BAKER') && !selectedBranchId) {
+      setError('Debes asignar una sucursal a los cajeros y panaderos.');
+      return;
+    }
     setLoading(true);
     setError(null);
     setSuccessMsg(null);
@@ -50,24 +79,20 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
         email,
         password,
         role,
+        branchId: selectedBranchId || null,
       });
 
       if (res.success) {
         setSuccessMsg(`¡Empleado "${name}" creado con éxito!`);
-        // Reset form
-        setName('');
-        setEmail('');
-        setPassword('');
-        setRole('cajero');
+        setName(''); setEmail(''); setPassword('');
 
-        // Add to list
         if (res.data) {
           const newEmp: Employee = {
             id: res.data.id,
-            tenantId: '', // not needed in UI table
+            tenantId: '',
             name: res.data.name,
             email: res.data.email,
-            role: res.data.role,
+            role: res.data.role as Employee['role'],
             isActive: true,
             createdAt: new Date(res.data.createdAt),
           };
@@ -83,7 +108,6 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
     }
   };
 
-  // Helper to translate roles for display
   const translateRole = (roleStr: string) => {
     const map: Record<string, string> = {
       SUPER_ADMIN: 'SaaS Super Admin',
@@ -97,40 +121,42 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8 font-sans text-slate-800">
-      
+
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-extrabold font-heading text-slate-800 tracking-tight flex items-center gap-3">
-            <div className="p-2 bg-orange-100 text-orange-600 rounded-2xl">
-              <Users size={28} />
-            </div>
-            Gestión de Personal - {tenantName}
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Administra a los cajeros y panaderos que trabajan en esta sucursal.
-          </p>
-        </div>
+      <div>
+        <h1 className="text-3xl font-extrabold font-heading text-slate-800 tracking-tight flex items-center gap-3">
+          <div className="p-2 bg-orange-100 text-orange-600 rounded-2xl">
+            <Users size={28} />
+          </div>
+          Gestión de Personal — {tenantName}
+        </h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Crea cajeros y panaderos asignándolos a una sucursal. Sin sucursal asignada, no podrán operar.
+        </p>
       </div>
 
-      {/* Grid Layout: Form and Directory */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Form Card */}
-        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-6 h-fit">
+
+        {/* Formulario */}
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-5 h-fit">
           <div>
             <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
               <UserPlus className="text-orange-500" size={20} />
               <span>Añadir Nuevo Empleado</span>
             </h3>
-            <p className="text-xs text-slate-400 mt-1">
-              Ingresa los datos del nuevo miembro del equipo.
-            </p>
+            <p className="text-xs text-slate-400 mt-1">Todos los campos son obligatorios.</p>
           </div>
 
+          {/* Alerta sin sucursales */}
+          {!isBranchesLoading && branches.length === 0 && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-xs font-medium">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>No hay sucursales registradas. Crea una sucursal primero desde la pestaña "Sucursales" del panel Admin.</span>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
-            
-            {/* Name */}
+            {/* Nombre */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-500 uppercase">Nombre Completo</label>
               <div className="relative">
@@ -152,7 +178,7 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
               <div className="relative">
                 <input
                   type="email"
-                  placeholder="email@criollito.com"
+                  placeholder="empleado@empresa.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
@@ -162,39 +188,78 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
               </div>
             </div>
 
-            {/* Password */}
+            {/* Contraseña */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-500 uppercase">Contraseña</label>
               <div className="relative">
                 <input
                   type="password"
-                  placeholder="••••••••"
+                  placeholder="Mínimo 8 caracteres"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                   required
+                  minLength={6}
                 />
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               </div>
             </div>
 
-            {/* Role select */}
+            {/* Rol */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Puesto / Rol</label>
-              <select 
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
-                value={role}
-                onChange={(e) => setRole(e.target.value as 'cajero' | 'panadero')}
-              >
-                <option value="cajero">Cajero</option>
-                <option value="panadero">Panadero</option>
-              </select>
+              <div className="grid grid-cols-2 gap-2">
+                {(['CASHIER', 'BAKER'] as const).map(r => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setRole(r)}
+                    className={`py-2.5 px-3 rounded-xl text-sm font-bold border-2 transition-all ${role === r ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
+                  >
+                    {r === 'CASHIER' ? '🏪 Cajero' : '🍞 Panadero'}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Feedback Notifications */}
+            {/* Sucursal */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1">
+                <MapPin size={12} />
+                Sucursal Asignada <span className="text-red-500 ml-0.5">*</span>
+              </label>
+              {isBranchesLoading ? (
+                <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-400 text-sm">
+                  <RefreshCw size={14} className="animate-spin" />
+                  <span>Cargando sucursales...</span>
+                </div>
+              ) : branches.length === 0 ? (
+                <div className="p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs text-center">
+                  Sin sucursales disponibles
+                </div>
+              ) : (
+                <select
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  value={selectedBranchId}
+                  onChange={(e) => setSelectedBranchId(e.target.value)}
+                  required
+                >
+                  <option value="">Seleccionar sucursal...</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}{b.address ? ` — ${b.address}` : ''}</option>
+                  ))}
+                </select>
+              )}
+              <p className="text-[11px] text-amber-600 font-medium flex items-start gap-1">
+                <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                Sin sucursal asignada, el empleado no puede operar en el POS ni en la panadería.
+              </p>
+            </div>
+
+            {/* Feedback */}
             <AnimatePresence mode="wait">
               {error && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
@@ -204,13 +269,12 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
                   <span>{error}</span>
                 </motion.div>
               )}
-
               {successMsg && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
-                  className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl flex items-start gap-2 text-emerald-600 text-xs font-medium"
+                  className="p-3 bg-green-50 border border-green-100 rounded-xl flex items-start gap-2 text-green-600 text-xs font-medium"
                 >
                   <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
                   <span>{successMsg}</span>
@@ -220,83 +284,82 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
 
             <Button
               type="submit"
-              disabled={loading}
-              className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              disabled={loading || branches.length === 0}
+              className="w-full h-12 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-xl font-bold flex items-center justify-center gap-2"
             >
               {loading ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                <RefreshCw size={16} className="animate-spin" />
               ) : (
-                <>
-                  <Sparkles size={16} />
-                  <span>Crear Empleado</span>
-                </>
+                <Plus size={16} />
               )}
+              <span>{loading ? 'Creando...' : 'Crear Empleado'}</span>
             </Button>
-
           </form>
         </div>
 
-        {/* Directory Card */}
+        {/* Directorio de Empleados */}
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 lg:col-span-2 space-y-4">
-          <div>
-            <h3 className="font-bold text-slate-800 text-lg">Personal Activo en la Sucursal</h3>
-            <p className="text-xs text-slate-400">
-              Listado del equipo registrado bajo tu cuenta de panadería. Solo puedes ver y gestionar empleados de tu propia empresa.
-            </p>
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+              <Building2 size={20} className="text-orange-500" />
+              Directorio de Personal
+            </h3>
+            <span className="text-xs text-slate-400 font-medium">{employeesList.length} usuarios registrados</span>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  <th className="pb-3 pl-2">Empleado</th>
-                  <th className="pb-3">Puesto / Rol</th>
-                  <th className="pb-3">Email</th>
-                  <th className="pb-3 text-right pr-2">Fecha Registro</th>
-                </tr>
-              </thead>
-              <tbody className="text-xs divide-y divide-slate-100">
-                {employeesList.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="py-8 text-center text-slate-400">
-                      No hay empleados registrados en esta panadería.
-                    </td>
+          {employeesList.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 bg-slate-50 rounded-2xl border border-dashed border-slate-200 gap-3">
+              <Users size={40} className="text-slate-300" />
+              <p className="text-base font-semibold text-slate-600">Sin empleados registrados</p>
+              <p className="text-sm text-slate-400 text-center max-w-xs">
+                Use el formulario de la izquierda para agregar el primer cajero o panadero.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    <th className="pb-3 pl-4">Empleado</th>
+                    <th className="pb-3">Email</th>
+                    <th className="pb-3 text-center">Rol</th>
+                    <th className="pb-3 text-center">Estado</th>
+                    <th className="pb-3 text-right pr-4">Alta</th>
                   </tr>
-                ) : (
-                  employeesList.map(emp => (
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {employeesList.map((emp) => (
                     <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="py-4 pl-2 font-bold text-slate-800 flex items-center gap-2">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
-                          emp.role === 'BAKER' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'
-                        }`}>
-                          {emp.name[0]}
-                        </div>
-                        <div>
-                          <div>{emp.name}</div>
-                          <span className="text-[10px] text-slate-400 block font-normal">{emp.isActive ? 'Activo' : 'Inactivo'}</span>
-                        </div>
-                      </td>
-                      <td className="py-4 font-medium text-slate-600">
-                        <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
-                          emp.role === 'BAKER' ? 'bg-orange-50 text-orange-600 border border-orange-100' : 'bg-blue-50 text-blue-600 border border-blue-100'
+                      <td className="py-4 pl-4 font-bold text-slate-800">{emp.name}</td>
+                      <td className="py-4 text-slate-500 font-mono text-xs">{emp.email}</td>
+                      <td className="py-4 text-center">
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                          emp.role === 'BAKER' ? 'bg-orange-100 text-orange-700' :
+                          emp.role === 'CASHIER' ? 'bg-green-100 text-green-700' :
+                          emp.role === 'ADMIN' ? 'bg-blue-100 text-blue-700' :
+                          emp.role === 'SUPERVISOR' ? 'bg-purple-100 text-purple-700' :
+                          'bg-indigo-100 text-indigo-700'
                         }`}>
                           {translateRole(emp.role)}
                         </span>
                       </td>
-                      <td className="py-4 text-slate-500">
-                        {emp.email}
+                      <td className="py-4 text-center">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          emp.isActive ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {emp.isActive ? 'Activo' : 'Inactivo'}
+                        </span>
                       </td>
-                      <td className="py-4 text-right text-slate-400 pr-2">
-                        {new Date(emp.createdAt).toLocaleDateString()}
+                      <td className="py-4 text-right pr-4 text-xs text-slate-400 font-mono">
+                        {new Date(emp.createdAt).toLocaleDateString('es-AR')}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-
       </div>
     </div>
   );

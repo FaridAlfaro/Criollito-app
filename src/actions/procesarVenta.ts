@@ -1,6 +1,6 @@
 'use server';
 
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, and } from 'drizzle-orm';
 import { db } from '@/db';
 import { 
   products, 
@@ -9,6 +9,7 @@ import {
   bakeQueue, 
   alerts 
 } from '@/db/schema';
+import { getCurrentUserSession } from '@/lib/auth-session';
 import { emitirFacturaARCA } from './arca';
 import { revalidatePath } from 'next/cache';
 
@@ -19,8 +20,6 @@ type SaleItemInput = {
 };
 
 export async function procesarVenta(
-  tenantId: string, 
-  cashierId: string, 
   items: SaleItemInput[], 
   paymentMethod: 'CASH' | 'DEBIT' | 'CREDIT' | 'QR',
   cashSessionId?: string,
@@ -31,10 +30,14 @@ export async function procesarVenta(
   numeroComprobante?: number,
   qrCodeData?: string
 ) {
+  // Zero-Trust: tenantId y cashierId SIEMPRE de la sesión del servidor
+  const session = await getCurrentUserSession();
+  const tenantId = session.tenantId;
+  const cashierId = session.id;
+  const branchId = session.branchId;
+
   try {
-    // Start a transaction
     await db.transaction(async (tx) => {
-      // 1. Calculate total amount
       const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
 
       let finalCae = cae;
@@ -43,7 +46,6 @@ export async function procesarVenta(
       let finalQrCodeData = qrCodeData;
 
       if (comprobanteTipo && !finalCae) {
-        // Emitir factura ARCA
         const netAmount = totalAmount / 1.21;
         const ivaAmount = totalAmount - netAmount;
         const docType = customerDoc ? (customerDoc.length > 8 ? 'CUIT' as const : 'DNI' as const) : 'CONSUMIDOR_FINAL' as const;
@@ -68,9 +70,10 @@ export async function procesarVenta(
         }
       }
 
-      // 2. Create Sale Record
+      // Insertar venta
       const [sale] = await tx.insert(sales).values({
         tenantId,
+        branchId,
         cashierId,
         cashSessionId: cashSessionId || null,
         totalAmount: totalAmount.toString(),
@@ -84,9 +87,8 @@ export async function procesarVenta(
         qrCodeData: finalQrCodeData || null,
       }).returning();
 
-      // 3. Process each item
+      // Procesar cada ítem
       for (const item of items) {
-        // Add sale item
         await tx.insert(saleItems).values({
           saleId: sale.id,
           productId: item.productId,
@@ -95,31 +97,40 @@ export async function procesarVenta(
           subtotal: (item.quantity * item.unitPrice).toString(),
         });
 
-        // Update Stock
+        // Descontar stock
         const [updatedProduct] = await tx.update(products)
           .set({
             currentStock: sql`${products.currentStock} - ${item.quantity}`,
             updatedAt: new Date()
           })
-          .where(eq(products.id, item.productId))
+          .where(
+            and(
+              eq(products.id, item.productId),
+              eq(products.tenantId, tenantId) // Seguridad: solo actualiza productos del tenant
+            )
+          )
           .returning();
 
-        // Check minimum stock threshold
+        if (!updatedProduct) continue;
+
+        // Verificar stock mínimo
         const currentStockNum = parseFloat(updatedProduct.currentStock as string);
         const minStockNum = parseFloat(updatedProduct.minDailyStock as string);
         
         if (currentStockNum < minStockNum) {
-          // Create an alert
+          // Crear alerta de stock bajo
           await tx.insert(alerts).values({
             tenantId,
+            targetBranchId: branchId, // Alerta específica de esta sucursal
             type: 'LOW_STOCK',
-            message: `Stock bajo para ${updatedProduct.name}: ${currentStockNum} restante.`,
+            message: `Stock bajo para ${updatedProduct.name}: ${currentStockNum.toFixed(2)} restante (mínimo: ${minStockNum.toFixed(2)}).`,
           });
 
-          // Add to bake queue
+          // Agregar a cola de horneado si no está ya
           const existingQueue = await tx.query.bakeQueue.findFirst({
             where: (bq, { eq, and, or }) => and(
               eq(bq.productId, updatedProduct.id),
+              eq(bq.tenantId, tenantId),
               or(eq(bq.status, 'PENDING'), eq(bq.status, 'BAKING'))
             )
           });
@@ -127,6 +138,7 @@ export async function procesarVenta(
           if (!existingQueue) {
             await tx.insert(bakeQueue).values({
               tenantId,
+              branchId,
               productId: updatedProduct.id,
               quantityNeeded: updatedProduct.optimalBatchSize,
               status: 'PENDING'
@@ -139,18 +151,10 @@ export async function procesarVenta(
     revalidatePath('/pos');
     revalidatePath('/baker');
     revalidatePath('/supervisor');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err) {
-    const isConnError = err instanceof Error && (
-      err.message.includes('connect ECONNREFUSED') ||
-      err.message.includes('5432') ||
-      err.message.includes('connection')
-    );
-    if (isConnError) {
-      console.warn('[DB Connection Warn] procesarVenta falló por error de conexión de base de datos:', err instanceof Error ? err.message : String(err));
-    } else {
-      console.error('[DB Error] procesarVenta falló:', err);
-    }
+    console.error('[DB Error] procesarVenta falló:', err);
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

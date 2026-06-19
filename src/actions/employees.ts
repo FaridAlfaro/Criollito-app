@@ -1,17 +1,101 @@
 'use server';
 
 import { db } from '@/db';
-import { users } from '@/db/schema';
+import { users, employees as employeesTable } from '@/db/schema';
 import { getCurrentUserSession } from '@/lib/auth-session';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { revalidatePath } from 'next/cache';
+
+export type EmployeeRow = typeof employeesTable.$inferSelect;
 
 function hashPassword(password: string): string {
   return createHash('sha256').update(password).digest('hex');
 }
 
-// Maps input roles to database enum roles
+// ==========================================
+// TABLA EMPLOYEES (RRHH - sueldos, turnos)
+// ==========================================
+
+export async function fetchEmployees(): Promise<EmployeeRow[]> {
+  const session = await getCurrentUserSession();
+
+  const query = (session.role === 'ADMIN' || session.role === 'SUPER_ADMIN')
+    ? and(eq(employeesTable.tenantId, session.tenantId), eq(employeesTable.isActive, true))
+    : session.branchId
+      ? and(
+          eq(employeesTable.tenantId, session.tenantId),
+          eq(employeesTable.branchId, session.branchId),
+          eq(employeesTable.isActive, true)
+        )
+      : and(eq(employeesTable.tenantId, session.tenantId), eq(employeesTable.isActive, true));
+
+  return db.select().from(employeesTable).where(query);
+}
+
+export async function updateEmployeeSalary(
+  employeeId: string,
+  baseSalary: number,
+  hourlyRate: number
+): Promise<EmployeeRow> {
+  const session = await getCurrentUserSession();
+
+  if (session.role !== 'ADMIN' && session.role !== 'SUPERVISOR' && session.role !== 'SUPER_ADMIN') {
+    throw new Error('Sin permisos para modificar salarios.');
+  }
+
+  const [updated] = await db.update(employeesTable)
+    .set({
+      baseSalary: baseSalary.toString(),
+      hourlyRate: hourlyRate.toString(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(employeesTable.id, employeeId),
+        eq(employeesTable.tenantId, session.tenantId)
+      )
+    )
+    .returning();
+
+  if (!updated) throw new Error('Empleado no encontrado.');
+  revalidatePath('/admin');
+  return updated;
+}
+
+export async function addEmployee(data: {
+  name: string;
+  email: string;
+  role: 'ADMIN' | 'SUPERVISOR' | 'BAKER' | 'CASHIER';
+  branchId?: string | null;
+  baseSalary?: number;
+  hourlyRate?: number;
+}): Promise<EmployeeRow> {
+  const session = await getCurrentUserSession();
+
+  if (session.role !== 'ADMIN' && session.role !== 'SUPER_ADMIN') {
+    throw new Error('Sin permisos para crear empleados.');
+  }
+
+  const [emp] = await db.insert(employeesTable).values({
+    tenantId: session.tenantId,
+    branchId: data.branchId ?? null,
+    name: data.name,
+    email: data.email,
+    role: data.role,
+    baseSalary: (data.baseSalary ?? 0).toString(),
+    hourlyRate: (data.hourlyRate ?? 0).toString(),
+    isActive: true,
+  }).returning();
+
+  revalidatePath('/admin');
+  return emp;
+}
+
+// ==========================================
+// TABLA USERS (autenticación)
+// ==========================================
+
 const EMPLOYEE_ROLES = {
   cajero: 'CASHIER' as const,
   panadero: 'BAKER' as const,
@@ -24,29 +108,19 @@ export async function createEmployee(data: {
   email: string;
   password: string;
   role: 'cajero' | 'panadero' | 'CASHIER' | 'BAKER';
+  branchId?: string | null;
 }) {
   try {
-    // 1. Get current session
     const session = await getCurrentUserSession();
 
-    // 2. Authorization check: must be ADMIN or SUPER_ADMIN
     if (session.role !== 'ADMIN' && session.role !== 'SUPER_ADMIN') {
       return { success: false, error: 'Acceso denegado. Se requiere rol ADMIN o SUPER_ADMIN.' };
     }
 
-    // 3. Form validation
     if (!data.name || !data.email || !data.password || !data.role) {
       return { success: false, error: 'Todos los campos son requeridos.' };
     }
 
-    // 4. Determine tenantId
-    // Rule of Gold: Retrieve tenantId from server session, never from parameters.
-    const tenantId = session.tenantId;
-    if (!tenantId) {
-      return { success: false, error: 'No se encontró un inquilino (tenant) válido en la sesión actual.' };
-    }
-
-    // 5. Hash the password
     const passwordHash = hashPassword(data.password);
     const dbRole = EMPLOYEE_ROLES[data.role];
 
@@ -54,9 +128,11 @@ export async function createEmployee(data: {
       return { success: false, error: 'Rol de empleado no válido.' };
     }
 
-    // 6. Insert new user into database forcing session's tenantId
+    const assignedBranchId = data.branchId || null;
+
     const [newUser] = await db.insert(users).values({
-      tenantId: tenantId,
+      tenantId: session.tenantId,
+      branchId: assignedBranchId,
       name: data.name,
       email: data.email,
       passwordHash: passwordHash,
@@ -64,16 +140,28 @@ export async function createEmployee(data: {
       isActive: true,
     }).returning();
 
+    // Crear también el registro en la tabla employees
+    await db.insert(employeesTable).values({
+      tenantId: session.tenantId,
+      branchId: assignedBranchId,
+      userId: newUser.id,
+      name: data.name,
+      email: data.email,
+      role: dbRole,
+      isActive: true,
+    });
+
     revalidatePath('/admin/usuarios');
-    return { 
-      success: true, 
+    revalidatePath('/admin');
+    return {
+      success: true,
       data: {
         id: newUser.id,
         name: newUser.name,
         email: newUser.email,
         role: newUser.role,
         createdAt: newUser.createdAt,
-      } 
+      }
     };
 
   } catch (err: any) {
@@ -86,30 +174,19 @@ export async function createEmployee(data: {
 }
 
 export async function getTenantEmployees() {
-  try {
-    const session = await getCurrentUserSession();
-    const tenantId = session.tenantId;
+  const session = await getCurrentUserSession();
 
-    if (!tenantId) {
-      return [];
-    }
+  const result = await db.select()
+    .from(users)
+    .where(eq(users.tenantId, session.tenantId));
 
-    // Aislamiento de datos estricto: filtramos solo por el tenantId del usuario de la sesión
-    const employees = await db.select()
-      .from(users)
-      .where(eq(users.tenantId, tenantId));
-
-    return employees.map(e => ({
-      id: e.id,
-      tenantId: e.tenantId,
-      name: e.name,
-      email: e.email,
-      role: e.role,
-      isActive: e.isActive,
-      createdAt: e.createdAt,
-    }));
-  } catch (err) {
-    console.error('Error fetching tenant employees:', err);
-    return [];
-  }
+  return result.map(e => ({
+    id: e.id,
+    tenantId: e.tenantId,
+    name: e.name,
+    email: e.email,
+    role: e.role,
+    isActive: e.isActive,
+    createdAt: e.createdAt,
+  }));
 }

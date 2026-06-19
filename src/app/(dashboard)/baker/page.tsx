@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { useStore } from "@/store/useStore";
-import { AlertTriangle, Clock, Volume2, BellRing, Sparkles } from 'lucide-react';
+import { AlertTriangle, Clock, Volume2, BellRing, Sparkles, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { fetchBakeQueue, updateBakeTaskStatus } from '@/actions/bakeQueue';
 
 // ==========================================
 // FUNCIONES AUXILIARES DE AUDIO Y NOTIFICACIÓN
@@ -236,7 +237,58 @@ function BakingTaskCard({ task, onFinish }: { task: any, onFinish: (id: string) 
 // ==========================================
 
 export default function BakerPage() {
-  const { bakeQueue, startBaking, finishBaking } = useStore();
+  const { bakeQueue, setBakeQueue, startBaking, finishBaking } = useStore();
+  const [isLoading, setIsLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const loadQueue = useCallback(async () => {
+    try {
+      const queue = await fetchBakeQueue();
+      setBakeQueue(queue.map(item => ({
+        id: item.id,
+        tenantId: item.tenantId,
+        branchId: item.branchId,
+        productId: item.productId,
+        productName: item.productName,
+        productType: item.productType,
+        quantityNeeded: parseFloat(item.quantityNeeded as string),
+        status: item.status as 'PENDING' | 'BAKING' | 'COMPLETED',
+        requestedAt: item.requestedAt,
+        startedAt: item.startedAt?.toISOString() ?? null,
+        completedAt: item.completedAt?.toISOString() ?? null,
+      })));
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.error('[Baker] Error cargando cola:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [setBakeQueue]);
+
+  // Carga inicial + polling cada 30 segundos
+  useEffect(() => {
+    loadQueue();
+    const interval = setInterval(loadQueue, 30000);
+    return () => clearInterval(interval);
+  }, [loadQueue]);
+
+  const handleStart = async (taskId: string, durationMinutes: number) => {
+    startBaking(taskId, durationMinutes);
+    try {
+      await updateBakeTaskStatus(taskId, 'BAKING', new Date());
+    } catch (err) {
+      console.error('[Baker] Error actualizando estado:', err);
+    }
+  };
+
+  const handleFinish = async (taskId: string) => {
+    finishBaking(taskId);
+    try {
+      await updateBakeTaskStatus(taskId, 'COMPLETED');
+    } catch (err) {
+      console.error('[Baker] Error completando tarea:', err);
+    }
+  };
 
   const pendingQueue = bakeQueue.filter(t => t.status === 'PENDING');
   const bakingQueue = bakeQueue.filter(t => t.status === 'BAKING');
@@ -251,8 +303,9 @@ export default function BakerPage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">Gestione las tandas de producción, controle los tiempos de cocción y reciba avisos cuando finalicen.</p>
         </div>
-        <Button className="bg-foreground hover:bg-foreground/90 text-background font-bold px-6 py-2 rounded-xl h-12 uppercase tracking-wide">
-          Horno Activo
+        <Button onClick={loadQueue} className="bg-foreground hover:bg-foreground/90 text-background font-bold px-6 py-2 rounded-xl h-12 uppercase tracking-wide flex items-center gap-2">
+          <RefreshCw size={16} />
+          {isLoading ? 'Cargando...' : 'Actualizar'}
         </Button>
       </header>
 
@@ -271,7 +324,7 @@ export default function BakerPage() {
             <PendingTaskCard 
               key={task.id} 
               task={task} 
-              onStart={startBaking} 
+              onStart={handleStart} 
             />
           ))}
         </AnimatePresence>
@@ -306,7 +359,7 @@ export default function BakerPage() {
             <BakingTaskCard 
               key={task.id} 
               task={task} 
-              onFinish={finishBaking} 
+              onFinish={handleFinish} 
             />
           ))}
         </AnimatePresence>
@@ -321,15 +374,11 @@ export default function BakerPage() {
         )}
       </div>
 
-      {/* Controles inferiores decorativos */}
-      <div className="mt-8 flex gap-4">
-         <Button className="bg-foreground hover:bg-foreground/90 text-background font-bold px-8 py-2 rounded-xl h-14 uppercase tracking-wide text-lg flex-1">
-           Comenzar Horneado
-         </Button>
-         <Button className="bg-foreground hover:bg-foreground/90 text-background font-bold px-8 py-2 rounded-xl h-14 uppercase tracking-wide text-lg flex-1">
-           Listo
-         </Button>
-      </div>
+      {lastUpdated && (
+        <p className="text-xs text-muted-foreground text-center mt-6">
+          Última actualización: {lastUpdated.toLocaleTimeString()} · Se actualiza automáticamente cada 30s
+        </p>
+      )}
 
     </div>
   );

@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 export interface ServerUserSession {
   id: string;
   tenantId: string;
+  branchId: string | null;
   role: 'SUPER_ADMIN' | 'ADMIN' | 'SUPERVISOR' | 'BAKER' | 'CASHIER';
   name: string;
 }
@@ -18,8 +19,9 @@ export async function getCurrentUserSession(): Promise<ServerUserSession> {
         return {
           id: parsed.id,
           tenantId: parsed.tenantId,
+          branchId: parsed.branchId ?? null,
           role: parsed.role,
-          name: parsed.name || 'Usuario'
+          name: parsed.name || 'Usuario',
         };
       }
     } catch (e) {
@@ -27,12 +29,5 @@ export async function getCurrentUserSession(): Promise<ServerUserSession> {
     }
   }
 
-  // Fallback: If no cookie is present, return a default session.
-  // Using default cashier ID and tenant ID to prevent breaking existing actions.
-  return {
-    id: '20000000-2000-2000-2000-200000000000',
-    tenantId: '10000000-1000-1000-1000-100000000000',
-    role: 'ADMIN',
-    name: 'Juan Cajero'
-  };
+  throw new Error('No autenticado. Por favor inicie sesión.');
 }

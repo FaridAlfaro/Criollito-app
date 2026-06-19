@@ -7,6 +7,8 @@ import { useSerialScale } from '@/hooks/useSerialScale';
 import { getBranchWorkers } from '@/actions/cashSessions';
 import { processMercadoPagoPayment } from '@/actions/payments';
 import { getCustomerByDni } from '@/actions/customers';
+import { fetchProducts } from '@/actions/products';
+import { fetchAlerts } from '@/actions/alerts';
 
 import { PosLoadingScreen } from './components/PosLoadingScreen';
 import { PosStatusBar } from './components/PosStatusBar';
@@ -32,6 +34,8 @@ const ARCA_LIMIT = 10000000;
 export default function POSPage() {
   const {
     products,
+    setProducts,
+    setAlerts,
     processSale,
     currentSession,
     pendingSales,
@@ -44,6 +48,7 @@ export default function POSPage() {
     posActiveTab,
     setPosActiveTab,
   } = useStore();
+  const currentUser = useStore(s => s.currentUser);
 
   const [mounted, setMounted] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -120,12 +125,23 @@ export default function POSPage() {
   const [simulatedWeight, setSimulatedWeight] = useState(0.0);
   const [isSimulatingScale, setIsSimulatingScale] = useState(false);
 
+  // Hidratación desde DB al montar el componente
   useEffect(() => {
-    async function loadWorkers() {
-      const list = await getBranchWorkers();
-      setWorkers(list);
+    async function hydrateFromDB() {
+      try {
+        const [productList, alertList, workerList] = await Promise.all([
+          fetchProducts(),
+          fetchAlerts(),
+          getBranchWorkers(),
+        ]);
+        setProducts(productList);
+        setAlerts(alertList);
+        setWorkers(workerList);
+      } catch (err) {
+        console.error('[POS] Error hidratando datos desde DB:', err);
+      }
     }
-    loadWorkers();
+    hydrateFromDB();
   }, []);
 
   useEffect(() => {
@@ -135,6 +151,8 @@ export default function POSPage() {
     }, 0);
     return () => clearTimeout(t);
   }, []);
+
+  // Los guards se aplican en el render, no aquí (evitar violación de reglas de Hooks)
 
   useEffect(() => {
     if (!mounted) return;
@@ -579,52 +597,48 @@ export default function POSPage() {
       if (posActiveTab === 'cobros' && !showCheckoutModal && !showQrModal && !showPrintModal && !showOpenModal && !showCloseModal && !showSummaryModal) {
         const k = key.toLowerCase();
 
-        if (k === 'm') {
+        // Atajos de teclado por índice (primer producto UNIT = 'm', segundo WEIGHT = 'p', etc.)
+        const unitProducts = products.filter(p => p.type === 'UNIT');
+        const weightProducts = products.filter(p => p.type === 'WEIGHT');
+
+        if (k === 'm' && unitProducts[0]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '11111111-1111-1111-1111-111111111111');
-          if (p) addToCart(p, 1);
+          addToCart(unitProducts[0], 1);
           return;
         }
-        if (k === ',') {
+        if (k === ',' && unitProducts[0]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '11111111-1111-1111-1111-111111111111');
-          if (p) addToCart(p, 6);
+          addToCart(unitProducts[0], 6);
           return;
         }
-        if (k === '.') {
+        if (k === '.' && unitProducts[0]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '11111111-1111-1111-1111-111111111111');
-          if (p) addToCart(p, 12);
+          addToCart(unitProducts[0], 12);
           return;
         }
-        if (k === 'p') {
+        if (k === 'p' && weightProducts[0]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '22222222-2222-2222-2222-222222222222');
-          if (p) addToCart(p);
+          addToCart(weightProducts[0]);
           return;
         }
-        if (k === 'k') {
+        if (k === 'k' && weightProducts[1]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '33333333-3333-3333-3333-333333333333');
-          if (p) addToCart(p);
+          addToCart(weightProducts[1]);
           return;
         }
-        if (k === 'f') {
+        if (k === 'f' && unitProducts[1]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '44444444-4444-4444-4444-444444444444');
-          if (p) addToCart(p, 1);
+          addToCart(unitProducts[1], 1);
           return;
         }
-        if (k === 'g') {
+        if (k === 'g' && unitProducts[1]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '44444444-4444-4444-4444-444444444444');
-          if (p) addToCart(p, 6);
+          addToCart(unitProducts[1], 6);
           return;
         }
-        if (k === 'h') {
+        if (k === 'h' && unitProducts[1]) {
           e.preventDefault();
-          const p = products.find((prod) => prod.id === '44444444-4444-4444-4444-444444444444');
-          if (p) addToCart(p, 12);
+          addToCart(unitProducts[1], 12);
           return;
         }
 
@@ -781,6 +795,29 @@ export default function POSPage() {
   }, [paymentMethod]);
 
   if (!mounted) return <PosLoadingScreen />;
+
+  // Guard: cajero SIN sucursal asignada → bloquear operaciones
+  if (!currentUser?.branchId) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-100 p-6 font-sans">
+        <div className="max-w-md w-full bg-white rounded-3xl p-10 shadow-xl border border-amber-100 text-center space-y-5">
+          <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-500 mx-auto">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          </div>
+          <h2 className="text-2xl font-bold font-heading text-slate-800">Sin Sucursal Asignada</h2>
+          <p className="text-slate-500 text-sm leading-relaxed">
+            Tu usuario no tiene una sucursal asignada. No puedes operar el punto de venta hasta que un administrador te asigne a una sucursal.
+          </p>
+          <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 text-xs text-slate-500 text-left space-y-1">
+            <p className="font-bold text-slate-700">¿Qué hacer?</p>
+            <p>1. Contacta al administrador de tu negocio.</p>
+            <p>2. El admin debe ir a <strong>Admin → Gestión de Personal</strong>.</p>
+            <p>3. Crear tu usuario y asignarte a la sucursal correcta.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full w-full relative bg-slate-50/50 text-slate-900 overflow-hidden p-4">

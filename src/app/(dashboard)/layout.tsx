@@ -63,12 +63,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // cajero -> /pos
   // panadero -> /baker
   const isAllowed = 
-    currentUser.role === 'superadmin' ||
-    (currentUser.role === 'admin' && pathname.startsWith('/admin')) ||
-    (currentUser.role === 'dueño' && (pathname.startsWith('/supervisor') || pathname.startsWith('/admin'))) ||
-    (currentUser.role === 'cajero' && pathname.startsWith('/pos')) ||
-    (currentUser.role === 'panadero' && pathname.startsWith('/baker')) ||
-    (currentUser.role === 'fuser' && (pathname.startsWith('/fuser') || pathname.startsWith('/admin') || pathname.startsWith('/supervisor') || pathname.startsWith('/pos') || pathname.startsWith('/baker')));
+    currentUser.role === 'SUPER_ADMIN' ||
+    (currentUser.role === 'ADMIN' && pathname.startsWith('/admin')) ||
+    (currentUser.role === 'SUPERVISOR' && (pathname.startsWith('/supervisor') || pathname.startsWith('/admin'))) ||
+    (currentUser.role === 'CASHIER' && pathname.startsWith('/pos')) ||
+    (currentUser.role === 'BAKER' && pathname.startsWith('/baker'));
 
   if (!isAllowed) {
     return (
