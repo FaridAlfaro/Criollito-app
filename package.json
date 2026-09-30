@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "db:fix-enum": "dotenv -e .env -- tsx src/scripts/fix-role-enum.ts",
     "db:seed": "dotenv -e .env -- tsx src/scripts/seed-demo.ts",
     "db:migrate": "drizzle-kit migrate",
     "db:reset-passwords": "tsx src/scripts/reset-passwords.ts",
@@ -16,6 +17,8 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@neon/config": "^1.8.3",
+    "@neon/env": "^1.4.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
