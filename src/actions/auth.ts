@@ -15,38 +15,44 @@ export async function loginAction(email: string, password: string) {
     return { success: false, error: 'Email y contraseña son requeridos.' };
   }
 
-  const passwordHash = hashPassword(password);
+  try {
+    const passwordHash = hashPassword(password);
 
-  const user = await db.query.users.findFirst({
-    where: (u, { and, eq }) => and(
-      eq(u.email, email.toLowerCase().trim()),
-      eq(u.passwordHash, passwordHash),
-      eq(u.isActive, true)
-    ),
-  });
+    const user = await db.query.users.findFirst({
+      where: (u, { and, eq }) => and(
+        eq(u.email, email.toLowerCase().trim()),
+        eq(u.passwordHash, passwordHash),
+        eq(u.isActive, true)
+      ),
+    });
 
-  if (!user) {
-    return { success: false, error: 'Credenciales incorrectas o usuario inactivo.' };
+    if (!user) {
+      console.log('[AUTH_DEBUG] Usuario no encontrado o credenciales incorrectas para:', email);
+      return { success: false, error: 'Credenciales incorrectas o usuario inactivo.' };
+    }
+
+    const sessionData = {
+      id: user.id,
+      tenantId: user.tenantId,
+      branchId: user.branchId ?? null,
+      role: user.role,
+      name: user.name,
+    };
+
+    const cookieStore = await cookies();
+    cookieStore.set('session', JSON.stringify(sessionData), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 12, // 12 horas
+    });
+
+    return { success: true, user: sessionData };
+  } catch (error) {
+    console.error('[AUTH_DEBUG] Error detallado en loginAction:', error);
+    throw error;
   }
-
-  const sessionData = {
-    id: user.id,
-    tenantId: user.tenantId,
-    branchId: user.branchId ?? null,
-    role: user.role,
-    name: user.name,
-  };
-
-  const cookieStore = await cookies();
-  cookieStore.set('session', JSON.stringify(sessionData), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 12, // 12 horas
-  });
-
-  return { success: true, user: sessionData };
 }
 
 export async function clearSessionAction() {
