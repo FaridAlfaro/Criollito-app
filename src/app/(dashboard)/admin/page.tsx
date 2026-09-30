@@ -114,23 +114,55 @@ export default function AdminPage() {
   const loadAllData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [branchList, empList, shiftList, metricsData, queueData] = await Promise.all([
+      const [
+        branchResult,
+        empResult,
+        shiftResult,
+        metricsResult,
+        queueResult,
+      ] = await Promise.allSettled([
         fetchBranches(),
         fetchEmployees(),
         fetchShifts(),
         getTenantMetrics(),
         fetchBakeQueue(),
       ]);
-      setBranches(branchList);
-      if (branchList.length > 0) {
-        setSelectedBranchIdForTurnos(prev => prev || branchList[0].id);
+
+      if (branchResult.status === 'fulfilled') {
+        const branchList = branchResult.value;
+        setBranches(branchList);
+        if (branchList.length > 0) {
+          setSelectedBranchIdForTurnos(prev => prev || branchList[0].id);
+        }
+      } else {
+        console.error('[Admin] Error cargando sucursales:', branchResult.reason);
       }
-      setEmployees(empList);
-      setShifts(shiftList as ShiftWithEmployee[]);
-      setMetrics(metricsData);
-      setBakeQueueItems(queueData);
+
+      if (empResult.status === 'fulfilled') {
+        setEmployees(empResult.value);
+      } else {
+        console.error('[Admin] Error cargando empleados:', empResult.reason);
+      }
+
+      if (shiftResult.status === 'fulfilled') {
+        setShifts(shiftResult.value as ShiftWithEmployee[]);
+      } else {
+        console.error('[Admin] Error cargando turnos:', shiftResult.reason);
+      }
+
+      if (metricsResult.status === 'fulfilled') {
+        setMetrics(metricsResult.value);
+      } else {
+        console.error('[Admin] Error cargando métricas:', metricsResult.reason);
+      }
+
+      if (queueResult.status === 'fulfilled') {
+        setBakeQueueItems(queueResult.value);
+      } else {
+        console.error('[Admin] Error cargando cola de horneado:', queueResult.reason);
+      }
     } catch (err) {
-      console.error('[Admin] Error cargando datos:', err);
+      console.error('[Admin] Error inesperado en loadAllData:', err);
       triggerToast('Error al cargar datos del servidor', 'error');
     } finally {
       setIsLoading(false);

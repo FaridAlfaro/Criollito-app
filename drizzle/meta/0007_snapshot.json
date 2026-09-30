@@ -1,6 +1,6 @@
 {
-  "id": "e3cba060-2212-4853-968a-124de486cdd4",
-  "prevId": "26b2a107-525e-481c-8b6d-4a8387258ec7",
+  "id": "8fe1b60d-fb20-4ca6-a42a-94a797b002ef",
+  "prevId": "e3cba060-2212-4853-968a-124de486cdd4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -801,6 +801,13 @@
         },
         "total_credit": {
           "name": "total_credit",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "total_qr": {
+          "name": "total_qr",
           "type": "numeric(10, 2)",
           "primaryKey": false,
           "notNull": false,

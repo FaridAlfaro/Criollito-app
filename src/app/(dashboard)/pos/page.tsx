@@ -129,14 +129,19 @@ export default function POSPage() {
   useEffect(() => {
     async function hydrateFromDB() {
       try {
-        const [productList, alertList, workerList] = await Promise.all([
+        const [productRes, alertRes, workerRes] = await Promise.allSettled([
           fetchProducts(),
           fetchAlerts(),
           getBranchWorkers(),
         ]);
-        setProducts(productList);
-        setAlerts(alertList);
-        setWorkers(workerList);
+        if (productRes.status === 'fulfilled') setProducts(productRes.value);
+        else console.error('[POS] Error al cargar productos:', productRes.reason);
+
+        if (alertRes.status === 'fulfilled') setAlerts(alertRes.value);
+        else console.error('[POS] Error al cargar alertas:', alertRes.reason);
+
+        if (workerRes.status === 'fulfilled') setWorkers(workerRes.value);
+        else console.error('[POS] Error al cargar trabajadores:', workerRes.reason);
       } catch (err) {
         console.error('[POS] Error hidratando datos desde DB:', err);
       }
@@ -387,8 +392,9 @@ export default function POSPage() {
     try {
       await openSession(parseFloat(initialAmountInput) || 0);
       setShowOpenModal(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error abriendo sesión:', err);
+      alert(err?.message || 'Error al conectar con la base de datos para abrir la sesión de caja.');
     }
   };
 

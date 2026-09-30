@@ -41,16 +41,29 @@ export default function SupervisorPage() {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [branchList, metricsData, productList, queueData] = await Promise.all([
+      const [
+        branchResult,
+        metricsResult,
+        productResult,
+        queueResult,
+      ] = await Promise.allSettled([
         fetchBranches(),
         getTenantMetrics(),
         fetchProducts(),
         fetchBakeQueue(),
       ]);
-      setBranches(branchList);
-      setMetrics(metricsData);
-      setProducts(productList);
-      setBakeQueue(queueData);
+
+      if (branchResult.status === 'fulfilled') setBranches(branchResult.value);
+      else console.error('[Supervisor] Error en sucursales:', branchResult.reason);
+
+      if (metricsResult.status === 'fulfilled') setMetrics(metricsResult.value);
+      else console.error('[Supervisor] Error en métricas:', metricsResult.reason);
+
+      if (productResult.status === 'fulfilled') setProducts(productResult.value);
+      else console.error('[Supervisor] Error en productos:', productResult.reason);
+
+      if (queueResult.status === 'fulfilled') setBakeQueue(queueResult.value);
+      else console.error('[Supervisor] Error en cola horneado:', queueResult.reason);
     } catch (err: any) {
       triggerToast(`Error cargando datos: ${err.message}`, 'error');
     } finally {

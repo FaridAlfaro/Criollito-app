@@ -1,39 +1,36 @@
 /**
- * SCRIPT DE SEED PARA DEMO
- * ========================
- * Crea el primer SUPER_ADMIN y el primer Tenant de prueba.
- * Ejecutar con: npm run db:seed
- *               o bien: npx dotenv-cli -e .env -- npx tsx src/scripts/seed-demo.ts
+ * SCRIPT DE SEED PARA DEMO (Estrictamente Idempotente)
+ * ====================================================
+ * Crea o actualiza el SUPER_ADMIN, Tenant, Sucursal, Usuarios operativos (Admin, Cajero, Panadero, Dueño)
+ * y Catálogo base de Productos y Recetas con paridad completa de esquema.
  *
- * Prerrequisitos:
- *   - Variables de entorno configuradas (.env con DATABASE_URL)
- *   - DB migrada (drizzle-kit migrate)
+ * Ejecutar con:
+ *   npm run db:seed
+ *   o bien:
+ *   npx tsx src/scripts/seed-demo.ts
  */
 
-// Cargar .env automáticamente
 import 'dotenv/config';
-
 import { db } from '../db';
-import { tenants, users, branches, products as productsTable } from '../db/schema';
+import { 
+  tenants, 
+  users, 
+  branches, 
+  products as productsTable, 
+  employees as employeesTable,
+  recipes as recipesTable 
+} from '../db/schema';
 import { createHash } from 'crypto';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 function hashPassword(password: string): string {
   return createHash('sha256').update(password).digest('hex');
 }
 
 async function seed() {
-  console.log('\n🌱 Iniciando seed de demo...\n');
+  console.log('\n🌱 Iniciando seed determinista e idempotente...\n');
 
-  // 1. SUPER ADMIN GLOBAL (SaaS)
-  const superAdminEmail = 'superadmin@criollito.com';
-  const superAdminPassword = 'Admin1234!';
-
-  let superAdmin = await db.query.users.findFirst({
-    where: (u, { and, eq }) => and(eq(u.email, superAdminEmail), eq(u.role, 'SUPER_ADMIN')),
-  });
-
-  // Buscar o crear un tenant base para el super admin
+  // 1. TENANT BASE
   let baseTenant = await db.query.tenants.findFirst();
 
   if (!baseTenant) {
@@ -42,50 +39,14 @@ async function seed() {
       businessName: 'Panadería El Criollito SRL',
       cuit: '30-99999999-0',
       puntoVenta: 1,
-      plan: 15000,
+      plan: 14,
     }).returning();
     console.log(`  ✅ Tenant creado: ${baseTenant.name} (${baseTenant.id})`);
   } else {
     console.log(`  ℹ️  Tenant existente: ${baseTenant.name} (${baseTenant.id})`);
   }
 
-  if (!superAdmin) {
-    [superAdmin] = await db.insert(users).values({
-      tenantId: baseTenant.id,
-      name: 'Super Administrador',
-      email: superAdminEmail,
-      passwordHash: hashPassword(superAdminPassword),
-      role: 'SUPER_ADMIN',
-      isActive: true,
-    }).returning();
-    console.log(`  ✅ SUPER_ADMIN creado: ${superAdminEmail} / ${superAdminPassword}`);
-  } else {
-    console.log(`  ℹ️  SUPER_ADMIN ya existe: ${superAdminEmail}`);
-  }
-
-  // 2. ADMIN del tenant
-  const adminEmail = 'admin@criollito.com';
-  const adminPassword = 'Admin1234!';
-
-  let adminUser = await db.query.users.findFirst({
-    where: (u, { and, eq }) => and(eq(u.email, adminEmail), eq(u.tenantId, baseTenant!.id)),
-  });
-
-  if (!adminUser) {
-    [adminUser] = await db.insert(users).values({
-      tenantId: baseTenant.id,
-      name: 'Administrador Local',
-      email: adminEmail,
-      passwordHash: hashPassword(adminPassword),
-      role: 'ADMIN',
-      isActive: true,
-    }).returning();
-    console.log(`  ✅ ADMIN creado: ${adminEmail} / ${adminPassword}`);
-  } else {
-    console.log(`  ℹ️  ADMIN ya existe: ${adminEmail}`);
-  }
-
-  // 3. SUCURSAL PRINCIPAL
+  // 2. SUCURSAL PRINCIPAL
   let mainBranch = await db.query.branches.findFirst({
     where: (b, { eq }) => eq(b.tenantId, baseTenant!.id),
   });
@@ -93,145 +54,247 @@ async function seed() {
   if (!mainBranch) {
     [mainBranch] = await db.insert(branches).values({
       tenantId: baseTenant.id,
-      name: 'Sucursal Principal',
-      address: 'Av. Principal 1234',
+      name: 'Sucursal Central',
+      address: 'Av. Corrientes 1234, CABA',
       isActive: true,
     }).returning();
     console.log(`  ✅ Sucursal creada: ${mainBranch.name} (${mainBranch.id})`);
   } else {
-    console.log(`  ℹ️  Sucursal ya existe: ${mainBranch.name} (${mainBranch.id})`);
+    console.log(`  ℹ️  Sucursal existente: ${mainBranch.name} (${mainBranch.id})`);
   }
 
-  // 4. CAJERO asignado a la sucursal
+  // Helper para upsert de usuario garantizando contraseñas y vinculaciones
+  async function upsertUser(
+    email: string,
+    plainPassword: string,
+    name: string,
+    role: 'SUPER_ADMIN' | 'ADMIN' | 'CASHIER' | 'BAKER' | 'SUPERVISOR',
+    branchId: string | null
+  ) {
+    const existing = await db.query.users.findFirst({
+      where: (u, { and, eq }) => and(eq(u.email, email), eq(u.tenantId, baseTenant!.id)),
+    });
+
+    const passwordHash = hashPassword(plainPassword);
+
+    if (!existing) {
+      const [created] = await db.insert(users).values({
+        tenantId: baseTenant!.id,
+        branchId,
+        name,
+        email,
+        passwordHash,
+        role,
+        isActive: true,
+      }).returning();
+      console.log(`  ✅ Usuario ${role} creado: ${email} (Sucursal: ${branchId ? mainBranch!.name : 'Global'})`);
+      return created;
+    } else {
+      // Actualizar para asegurar paridad de contraseña, rol y sucursal
+      const [updated] = await db.update(users).set({
+        name,
+        passwordHash,
+        role,
+        branchId: branchId || existing.branchId,
+        isActive: true,
+        updatedAt: new Date(),
+      }).where(eq(users.id, existing.id)).returning();
+      console.log(`  ℹ️  Usuario ${role} actualizado/verificado: ${email}`);
+      return updated;
+    }
+  }
+
+  // 3. USUARIOS OPERATIVOS REQUERIDOS
+  const superAdminEmail = 'superadmin@criollito.com';
+  const superAdmin = await upsertUser(
+    superAdminEmail,
+    'Admin1234!',
+    'Super Administrador Global',
+    'SUPER_ADMIN',
+    mainBranch.id
+  );
+
+  const adminEmail = 'admin@criollito.com';
+  const adminUser = await upsertUser(
+    adminEmail,
+    'Admin1234!',
+    'Administrador de Sucursal',
+    'ADMIN',
+    mainBranch.id
+  );
+
   const cashierEmail = 'cajero@criollito.com';
-  const cashierPassword = 'Cajero1234!';
+  const cashierUser = await upsertUser(
+    cashierEmail,
+    'Cajero1234!',
+    'Cajero Principal',
+    'CASHIER',
+    mainBranch.id
+  );
 
-  let cashierUser = await db.query.users.findFirst({
-    where: (u, { and, eq }) => and(eq(u.email, cashierEmail), eq(u.tenantId, baseTenant!.id)),
-  });
-
-  if (!cashierUser) {
-    [cashierUser] = await db.insert(users).values({
-      tenantId: baseTenant.id,
-      branchId: mainBranch.id,
-      name: 'Cajero Demo',
-      email: cashierEmail,
-      passwordHash: hashPassword(cashierPassword),
-      role: 'CASHIER',
-      isActive: true,
-    }).returning();
-    console.log(`  ✅ CAJERO creado: ${cashierEmail} / ${cashierPassword} → Sucursal: ${mainBranch.name}`);
-  } else {
-    console.log(`  ℹ️  CAJERO ya existe: ${cashierEmail}`);
-  }
-
-  // 5. PANADERO asignado a la sucursal
   const bakerEmail = 'panadero@criollito.com';
-  const bakerPassword = 'Baker1234!';
+  const bakerUser = await upsertUser(
+    bakerEmail,
+    'Baker1234!',
+    'Maestro Panadero',
+    'BAKER',
+    mainBranch.id
+  );
 
-  let bakerUser = await db.query.users.findFirst({
-    where: (u, { and, eq }) => and(eq(u.email, bakerEmail), eq(u.tenantId, baseTenant!.id)),
-  });
-
-  if (!bakerUser) {
-    [bakerUser] = await db.insert(users).values({
-      tenantId: baseTenant.id,
-      branchId: mainBranch.id,
-      name: 'Panadero Demo',
-      email: bakerEmail,
-      passwordHash: hashPassword(bakerPassword),
-      role: 'BAKER',
-      isActive: true,
-    }).returning();
-    console.log(`  ✅ BAKER creado: ${bakerEmail} / ${bakerPassword} → Sucursal: ${mainBranch.name}`);
-  } else {
-    console.log(`  ℹ️  BAKER ya existe: ${bakerEmail}`);
-  }
-
-  // 6. DUEÑO / SUPERVISOR
   const supervisorEmail = 'dueno@criollito.com';
-  const supervisorPassword = 'Dueno1234!';
+  const supervisorUser = await upsertUser(
+    supervisorEmail,
+    'Dueno1234!',
+    'Dueño / Supervisor',
+    'SUPERVISOR',
+    mainBranch.id
+  );
 
-  let supervisorUser = await db.query.users.findFirst({
-    where: (u, { and, eq }) => and(eq(u.email, supervisorEmail), eq(u.tenantId, baseTenant!.id)),
-  });
+  // 4. REGISTROS DE EMPLEADOS (Reloj de fichadas y turnos)
+  const employeeConfigs = [
+    { user: cashierUser, name: 'Cajero Principal', email: cashierEmail, role: 'CASHIER' as const, baseSalary: '450000', hourlyRate: '2800' },
+    { user: bakerUser, name: 'Maestro Panadero', email: bakerEmail, role: 'BAKER' as const, baseSalary: '550000', hourlyRate: '3400' },
+    { user: adminUser, name: 'Administrador de Sucursal', email: adminEmail, role: 'ADMIN' as const, baseSalary: '700000', hourlyRate: '4200' },
+  ];
 
-  if (!supervisorUser) {
-    [supervisorUser] = await db.insert(users).values({
-      tenantId: baseTenant.id,
-      name: 'Dueño Demo',
-      email: supervisorEmail,
-      passwordHash: hashPassword(supervisorPassword),
-      role: 'SUPERVISOR',
-      isActive: true,
-    }).returning();
-    console.log(`  ✅ SUPERVISOR/DUEÑO creado: ${supervisorEmail} / ${supervisorPassword}`);
-  } else {
-    console.log(`  ℹ️  SUPERVISOR ya existe: ${supervisorEmail}`);
+  for (const emp of employeeConfigs) {
+    const existingEmp = await db.query.employees.findFirst({
+      where: (e, { and, eq }) => and(eq(e.tenantId, baseTenant!.id), eq(e.userId, emp.user.id)),
+    });
+
+    if (!existingEmp) {
+      await db.insert(employeesTable).values({
+        tenantId: baseTenant!.id,
+        branchId: mainBranch.id,
+        userId: emp.user.id,
+        name: emp.name,
+        email: emp.email,
+        role: emp.role,
+        baseSalary: emp.baseSalary,
+        hourlyRate: emp.hourlyRate,
+        isActive: true,
+      });
+      console.log(`  ✅ Empleado creado en nómina: ${emp.name} (${emp.role})`);
+    } else {
+      await db.update(employeesTable).set({
+        branchId: mainBranch.id,
+        baseSalary: emp.baseSalary,
+        hourlyRate: emp.hourlyRate,
+        isActive: true,
+        updatedAt: new Date(),
+      }).where(eq(employeesTable.id, existingEmp.id));
+      console.log(`  ℹ️  Empleado sincronizado en nómina: ${emp.name}`);
+    }
   }
 
-  // 7. PRODUCTOS DE EJEMPLO
-  const existingProducts = await db.select().from(productsTable).where(eq(productsTable.tenantId, baseTenant.id));
+  // 5. CATÁLOGO DE PRODUCTOS (Idempotente)
+  const defaultProducts = [
+    {
+      name: 'Medialuna',
+      description: 'Medialuna artesanal de manteca',
+      type: 'UNIT' as const,
+      category: 'FINISHED_PRODUCT' as const,
+      price: '500.00',
+      cost: '180.00',
+      currentStock: '120.000',
+      minDailyStock: '50.000',
+      optimalBatchSize: '48.000',
+      barcode: '200000100000',
+    },
+    {
+      name: 'Pan Francés',
+      description: 'Pan francés crocante por kilo',
+      type: 'WEIGHT' as const,
+      category: 'FINISHED_PRODUCT' as const,
+      price: '3500.00',
+      cost: '1200.00',
+      currentStock: '45.000',
+      minDailyStock: '15.000',
+      optimalBatchSize: '10.000',
+      barcode: '200000200000',
+    },
+    {
+      name: 'Factura Surtida',
+      description: 'Facturas surtidas de crema y dulce de leche',
+      type: 'UNIT' as const,
+      category: 'FINISHED_PRODUCT' as const,
+      price: '800.00',
+      cost: '290.00',
+      currentStock: '80.000',
+      minDailyStock: '30.000',
+      optimalBatchSize: '48.000',
+      barcode: '200000300000',
+    },
+  ];
 
-  if (existingProducts.length === 0) {
-    await db.insert(productsTable).values([
-      {
-        tenantId: baseTenant.id,
+  const seededProducts: (typeof productsTable.$inferSelect)[] = [];
+
+  for (const prod of defaultProducts) {
+    const existing = await db.query.products.findFirst({
+      where: (p, { and, eq }) => and(eq(p.tenantId, baseTenant!.id), eq(p.name, prod.name)),
+    });
+
+    if (!existing) {
+      const [created] = await db.insert(productsTable).values({
+        tenantId: baseTenant!.id,
         branchId: mainBranch.id,
-        name: 'Medialuna',
-        description: 'Medialuna de manteca',
-        type: 'UNIT' as const,
-        price: '500',
-        currentStock: 0,
-        minDailyStock: 50,
-        optimalBatchSize: 48,
-        isActive: true,
-      },
-      {
-        tenantId: baseTenant.id,
-        branchId: mainBranch.id,
-        name: 'Pan Francés',
-        description: 'Pan francés por kg',
-        type: 'WEIGHT' as const,
-        price: '3500',
-        currentStock: 0,
-        minDailyStock: 10,
-        optimalBatchSize: 5,
-        isActive: true,
-      },
-      {
-        tenantId: baseTenant.id,
-        branchId: mainBranch.id,
-        name: 'Factura Surtida',
-        description: 'Factura surtida (unidad)',
-        type: 'UNIT' as const,
-        price: '800',
-        currentStock: 0,
-        minDailyStock: 30,
-        optimalBatchSize: 48,
-        isActive: true,
-      },
-    ]);
-    console.log(`  ✅ 3 productos de ejemplo creados`);
-  } else {
-    console.log(`  ℹ️  Ya existen ${existingProducts.length} productos`);
+        name: prod.name,
+        type: prod.type,
+        category: prod.category,
+        price: prod.price,
+        cost: prod.cost,
+        currentStock: prod.currentStock,
+        minDailyStock: prod.minDailyStock,
+        optimalBatchSize: prod.optimalBatchSize,
+        barcode: prod.barcode,
+      }).returning();
+      seededProducts.push(created);
+      console.log(`  ✅ Producto creado: ${prod.name} ($${prod.price})`);
+    } else {
+      seededProducts.push(existing);
+      console.log(`  ℹ️  Producto existente: ${prod.name}`);
+    }
   }
 
-  console.log('\n✅ Seed completado exitosamente.\n');
+  // 6. RECETA DE PRODUCCIÓN BASE (KDS / Unidades por bandeja)
+  const medialunaProd = seededProducts.find(p => p.name === 'Medialuna');
+  if (medialunaProd) {
+    const existingRecipe = await db.query.recipes.findFirst({
+      where: (r, { and, eq }) => and(eq(r.tenantId, baseTenant!.id), eq(r.productId, medialunaProd.id)),
+    });
+
+    if (!existingRecipe) {
+      await db.insert(recipesTable).values({
+        tenantId: baseTenant.id,
+        productId: medialunaProd.id,
+        name: 'Receta Tradicional de Medialunas',
+        yieldUnits: '48.000',
+        unitsPerTray: 24,
+        estimatedMinutes: 45,
+        instructions: 'Amasado de hojaldre con manteca, 3 vueltas simples, reposo de 2 horas y horneado a 190°C.',
+        isActive: true,
+      });
+      console.log(`  ✅ Receta base creada para Medialuna (24 unidades/bandeja)`);
+    } else {
+      console.log(`  ℹ️  Receta existente para Medialuna`);
+    }
+  }
+
+  console.log('\n✅ Seed determinista completado exitosamente.\n');
   console.log('═══════════════════════════════════════════════════════');
-  console.log('  CREDENCIALES DE ACCESO AL DEMO:');
+  console.log('  CREDENCIALES ACTIVAS VERIFICADAS:');
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`  🔑 Super Admin    : ${superAdminEmail}     / ${superAdminPassword}`);
-  console.log(`  🔑 Admin Local    : ${adminEmail}         / ${adminPassword}`);
-  console.log(`  🔑 Cajero         : ${cashierEmail}       / ${cashierPassword}`);
-  console.log(`  🔑 Panadero       : ${bakerEmail}         / ${bakerPassword}`);
-  console.log(`  🔑 Dueño/Supervisor: ${supervisorEmail}   / ${supervisorPassword}`);
+  console.log(`  🔑 Super Admin     : ${superAdminEmail}     / Admin1234!`);
+  console.log(`  🔑 Admin Sucursal  : ${adminEmail}         / Admin1234!`);
+  console.log(`  🔑 Cajero          : ${cashierEmail}       / Cajero1234!`);
+  console.log(`  🔑 Maestro Panadero: ${bakerEmail}         / Baker1234!`);
+  console.log(`  🔑 Dueño/Supervisor: ${supervisorEmail}   / Dueno1234!`);
   console.log('═══════════════════════════════════════════════════════\n');
 
   process.exit(0);
 }
 
 seed().catch(err => {
-  console.error('❌ Error en seed:', err);
+  console.error('❌ Error fatal en seed:', err);
   process.exit(1);
 });

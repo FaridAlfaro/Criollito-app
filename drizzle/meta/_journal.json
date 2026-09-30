@@ -50,6 +50,13 @@
       "when": 1790730835930,
       "tag": "0006_plain_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790761686964,
+      "tag": "0007_hesitant_cassandra_nova",
+      "breakpoints": true
     }
   ]
 }

@@ -292,9 +292,13 @@ export const useStore = create<AppState>()(
       setPosActiveTab: (tab) => set({ posActiveTab: tab }),
 
       openSession: async (initialAmount) => {
-        const session = await openSessionAction(initialAmount);
-        set({ currentSession: session as CashSession, salesHistory: [], movementsHistory: [] });
-        return session as CashSession;
+        const res = await openSessionAction(initialAmount);
+        if (res && (res as any).success === false) {
+          throw new Error((res as any).error || 'Error abriendo caja');
+        }
+        const sessionData = (res as any)?.data || res;
+        set({ currentSession: sessionData as CashSession, salesHistory: [], movementsHistory: [] });
+        return sessionData as CashSession;
       },
 
       registerMovement: async (type, amount, description) => {

@@ -16,4 +16,9 @@ export function isOk<T, E>(result: Result<T, E>): result is { success: true; dat
 
 export function isErr<T, E>(result: Result<T, E>): result is { success: false; error: E } {
   return !result.success;
-}
+}export const Result = {
+  ok,
+  err,
+  isOk,
+  isErr,
+};

@@ -1,0 +1,1 @@
+ALTER TABLE "cash_sessions" ADD COLUMN "total_qr" numeric(10, 2) DEFAULT '0';

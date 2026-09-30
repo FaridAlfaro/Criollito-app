@@ -53,3 +53,13 @@ export class ForbiddenError extends DomainError {
   }
 }
 
+export class InfrastructureError extends DomainError {
+  public readonly code = 'INFRASTRUCTURE_ERROR';
+  public readonly originalError?: unknown;
+
+  constructor(message = 'Error de infraestructura o base de datos.', originalError?: unknown) {
+    super(message);
+    this.originalError = originalError;
+  }
+}
+
