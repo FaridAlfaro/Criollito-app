@@ -183,9 +183,14 @@ export class DrizzleBakeQueueRepository implements IBakeQueueRepository {
     if (status === 'BAKING' && startedAt) updateData.startedAt = startedAt;
     if (status === 'COMPLETED' && completedAt) updateData.completedAt = completedAt;
 
-    await client.update(bakeQueue)
+    const [updated] = await client.update(bakeQueue)
       .set(updateData)
-      .where(and(eq(bakeQueue.id, orderId), eq(bakeQueue.tenantId, tenantId)));
+      .where(and(eq(bakeQueue.id, orderId), eq(bakeQueue.tenantId, tenantId)))
+      .returning();
+
+    if (!updated) {
+      throw new Error(`Orden de horneado con ID "${orderId}" no encontrada en el tenant.`);
+    }
   }
 
   async completeOrderAndDeduct(
@@ -196,13 +201,18 @@ export class DrizzleBakeQueueRepository implements IBakeQueueRepository {
   ): Promise<void> {
     const client = this.getClient(tx);
 
-    await client.update(bakeQueue)
+    const [updated] = await client.update(bakeQueue)
       .set({
         status: 'COMPLETED',
         completedAt,
         deductedIngredients: true,
       })
-      .where(and(eq(bakeQueue.id, orderId), eq(bakeQueue.tenantId, tenantId)));
+      .where(and(eq(bakeQueue.id, orderId), eq(bakeQueue.tenantId, tenantId)))
+      .returning();
+
+    if (!updated) {
+      throw new Error(`Orden de horneado con ID "${orderId}" no encontrada para completar.`);
+    }
   }
 
   async deductStock(
@@ -213,12 +223,17 @@ export class DrizzleBakeQueueRepository implements IBakeQueueRepository {
   ): Promise<void> {
     const client = this.getClient(tx);
 
-    await client.update(products)
+    const [updated] = await client.update(products)
       .set({
-        currentStock: sql`${products.currentStock} - ${quantity}`,
+        currentStock: sql`COALESCE(${products.currentStock}, 0) - ${quantity}`,
         updatedAt: new Date(),
       })
-      .where(and(eq(products.id, productId), eq(products.tenantId, tenantId)));
+      .where(and(eq(products.id, productId), eq(products.tenantId, tenantId)))
+      .returning();
+
+    if (!updated) {
+      throw new Error(`Insumo con ID "${productId}" no encontrado para descontar stock.`);
+    }
   }
 
   async addStock(
@@ -229,11 +244,16 @@ export class DrizzleBakeQueueRepository implements IBakeQueueRepository {
   ): Promise<void> {
     const client = this.getClient(tx);
 
-    await client.update(products)
+    const [updated] = await client.update(products)
       .set({
-        currentStock: sql`${products.currentStock} + ${quantity}`,
+        currentStock: sql`COALESCE(${products.currentStock}, 0) + ${quantity}`,
         updatedAt: new Date(),
       })
-      .where(and(eq(products.id, productId), eq(products.tenantId, tenantId)));
+      .where(and(eq(products.id, productId), eq(products.tenantId, tenantId)))
+      .returning();
+
+    if (!updated) {
+      throw new Error(`Producto elaborado con ID "${productId}" no encontrado para incrementar stock.`);
+    }
   }
 }

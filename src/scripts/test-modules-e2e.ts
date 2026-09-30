@@ -27,7 +27,7 @@ import {
   sales, 
   cashSessions 
 } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { createHash } from 'crypto';
 
 // Casos de uso de Identity
@@ -346,6 +346,11 @@ async function runTestSuite() {
   // 3. MÓDULO SALES & POS (Idempotencia y Arqueos)
   // ==========================================
   console.log(`${BOLD}${BLUE}[3/4] Testeando Módulo SALES & Idempotencia POS...${RESET}`);
+
+  // Cerrar cualquier sesión previa abierta para aislar el test
+  await db.update(cashSessions)
+    .set({ closedAt: new Date(), closingCash: '0.00' })
+    .where(and(eq(cashSessions.tenantId, tenant.id), eq(cashSessions.cashierId, user.id), isNull(cashSessions.closedAt)));
 
   // Abrir sesión de caja con $10.000 iniciales
   const session = await openCashSessionUseCase.execute({

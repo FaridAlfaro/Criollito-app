@@ -15,7 +15,8 @@
     "db:reset-passwords": "tsx src/scripts/reset-passwords.ts",
     "test:modules": "tsx src/scripts/test-modules-e2e.ts",
     "test:gateway": "tsx src/scripts/test-gateway-http.ts",
-    "test:enhancements": "tsx src/scripts/test-enhancements-e2e.ts"
+    "test:enhancements": "tsx src/scripts/test-enhancements-e2e.ts",
+    "test:kitchen": "tsx src/scripts/test-kitchen-transaction.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

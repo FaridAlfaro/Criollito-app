@@ -273,20 +273,32 @@ export default function BakerPage() {
   }, [loadQueue]);
 
   const handleStart = async (taskId: string, durationMinutes: number) => {
-    startBaking(taskId, durationMinutes);
     try {
-      await updateBakeTaskStatus(taskId, 'BAKING', new Date());
+      const res = await updateBakeTaskStatus(taskId, 'BAKING', new Date());
+      if (res && !res.success) {
+        alert(res.error || 'No se pudo iniciar el horneado en el servidor.');
+        return;
+      }
+      startBaking(taskId, durationMinutes);
+      await loadQueue();
     } catch (err) {
       console.error('[Baker] Error actualizando estado:', err);
+      alert('Error de conexión al iniciar horneado.');
     }
   };
 
   const handleFinish = async (taskId: string) => {
-    finishBaking(taskId);
     try {
-      await updateBakeTaskStatus(taskId, 'COMPLETED');
+      const res = await updateBakeTaskStatus(taskId, 'COMPLETED');
+      if (res && !res.success) {
+        alert(res.error || 'No se pudo completar la tarea en la base de datos.');
+        return;
+      }
+      finishBaking(taskId);
+      await loadQueue();
     } catch (err) {
       console.error('[Baker] Error completando tarea:', err);
+      alert('Error de conexión al completar la tarea.');
     }
   };
 

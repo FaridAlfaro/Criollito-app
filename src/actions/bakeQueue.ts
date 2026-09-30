@@ -55,24 +55,53 @@ export async function updateBakeTaskStatus(
   taskId: string,
   status: 'BAKING' | 'COMPLETED',
   startedAt?: Date
-): Promise<void> {
-  const session = await getCurrentUserSession();
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await getCurrentUserSession();
 
-  await updateBakeStatusUseCase.execute({
-    taskId,
-    status,
-    startedAt,
-  }, {
-    tenantId: session.tenantId,
-    branchId: session.branchId,
-    userId: session.id,
-    role: session.role,
-    name: session.name,
-  });
+    const result = await updateBakeStatusUseCase.execute({
+      taskId,
+      status,
+      startedAt,
+    }, {
+      tenantId: session.tenantId,
+      branchId: session.branchId,
+      userId: session.id,
+      role: session.role,
+      name: session.name,
+    });
 
-  revalidatePath('/baker');
-  revalidatePath('/admin');
-  revalidatePath('/pos');
+    if (!result.success) {
+      const errorMsg = (result as any).error?.message || (result as any).error || 'Error al actualizar estado de la orden';
+      console.error('[Action Error] updateBakeTaskStatus falló:', {
+        severity: 'ERROR',
+        taskId,
+        status,
+        error: errorMsg,
+        timestamp: new Date().toISOString(),
+      });
+      return { success: false, error: errorMsg };
+    }
+
+    console.log(`[BAKE_ACTION_SUCCESS] Orden actualizada: ${taskId} -> ${status}`);
+
+    revalidatePath('/baker');
+    revalidatePath('/admin');
+    revalidatePath('/pos');
+    revalidatePath('/supervisor');
+
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('[Action Error] updateBakeTaskStatus excepción no controlada:', {
+      severity: 'ERROR',
+      taskId,
+      status,
+      error: errorMsg,
+      timestamp: new Date().toISOString(),
+    });
+    return { success: false, error: errorMsg };
+  }
 }
 
 /**

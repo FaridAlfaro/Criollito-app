@@ -5,12 +5,11 @@ export type DrizzleTransaction = Parameters<Parameters<typeof db.transaction>[0]
 export type DbOrTx = DrizzleDatabase | DrizzleTransaction;
 
 /**
- * Ejecuta una función dentro de una transacción Drizzle.
- * Si ya se encuentra dentro de una transacción (se proporciona un tx existente),
- * la reutiliza sin abrir una anidada.
- * Si el driver subyacente (ej. @neondatabase/serverless vía neon-http) no soporta
- * transacciones TCP interactivas sobre HTTP stateless, conmuta de forma transparente
- * a ejecución directa sobre el cliente HTTP.
+ * Ejecuta una unidad de trabajo (Unit of Work) dentro de una transacción ACID interactiva en PostgreSQL.
+ * - Si ya se encuentra dentro de una transacción (`existingTx`), la reutiliza sin abrir una anidada.
+ * - Si no, abre una transacción nativa mediante `db.transaction(async (tx) => { ... })`.
+ * - Pasa obligatoriamente la instancia `tx` a los repositorios para garantizar aislamiento atómico.
+ * - Si cualquier operación interna falla, PostgreSQL ejecuta un ROLLBACK estricto y la excepción es relanzada.
  */
 export async function runInTransaction<T>(
   callback: (tx: DrizzleTransaction) => Promise<T>,
@@ -20,14 +19,7 @@ export async function runInTransaction<T>(
     return callback(existingTx);
   }
 
-  try {
-    return await db.transaction(async (tx) => {
-      return callback(tx);
-    });
-  } catch (err: any) {
-    if (err?.message?.includes('No transactions support in neon-http driver')) {
-      return callback(db as unknown as DrizzleTransaction);
-    }
-    throw err;
-  }
+  return db.transaction(async (tx) => {
+    return callback(tx);
+  });
 }
