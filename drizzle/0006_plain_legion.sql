@@ -1,0 +1,1 @@
+ALTER TABLE "recipes" ADD COLUMN "units_per_tray" integer DEFAULT 24 NOT NULL;

@@ -15,6 +15,7 @@ import { requestBakeTask, fetchBakeQueue } from '@/actions/bakeQueue';
 import { fetchBranches } from '@/actions/branches';
 import { getTenantMetrics } from '@/actions/metrics';
 import { fetchProducts } from '@/actions/products';
+import { CreateBakeOrderModal } from '@/components/CreateBakeOrderModal';
 import type { BranchRow } from '@/actions/branches';
 import type { TenantMetrics } from '@/actions/metrics';
 
@@ -29,6 +30,7 @@ export default function SupervisorPage() {
   const [bakeQueue, setBakeQueue] = useState<any[]>([]);
   const [bakeQuantities, setBakeQuantities] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isBakeModalOpen, setIsBakeModalOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const triggerToast = (text: string, type: 'success' | 'error' = 'success') => {
@@ -426,14 +428,25 @@ export default function SupervisorPage() {
 
                     {/* Cola de Horneado Real */}
                     <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-4">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2.5 bg-orange-50 text-orange-500 rounded-xl">
-                          <Flame size={20} className="animate-pulse" />
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="p-2.5 bg-orange-50 text-orange-500 rounded-xl">
+                            <Flame size={20} className="animate-pulse" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-800">Horno Activo</h3>
+                            <p className="text-xs text-slate-400">Órdenes de cocina en tiempo real</p>
+                          </div>
                         </div>
-                        <div>
-                          <h3 className="font-bold text-slate-800">Horno Activo</h3>
-                          <p className="text-xs text-slate-400">Órdenes de cocina en tiempo real</p>
-                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setIsBakeModalOpen(true)}
+                          className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-xs transition-colors"
+                        >
+                          <Plus size={14} />
+                          <span>Crear por Bandeja</span>
+                        </button>
                       </div>
 
                       <div className="space-y-2 max-h-72 overflow-y-auto">
@@ -523,6 +536,15 @@ export default function SupervisorPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <CreateBakeOrderModal
+        isOpen={isBakeModalOpen}
+        onClose={() => setIsBakeModalOpen(false)}
+        onSuccess={() => {
+          loadData();
+          triggerToast('¡Orden de horneado encolada con éxito!');
+        }}
+      />
     </div>
   );
 }

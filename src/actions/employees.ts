@@ -1,38 +1,54 @@
 'use server';
 
-import { db } from '@/db';
-import { users, employees as employeesTable } from '@/db/schema';
 import { getCurrentUserSession } from '@/lib/auth-session';
-import { eq, and } from 'drizzle-orm';
-import { createHash } from 'crypto';
+import { 
+  manageEmployeesUseCase, 
+  recordTimeClockUseCase,
+  Employee
+} from '@/modules/identity';
+import { employees as employeesTable } from '@/db/schema';
 import { revalidatePath } from 'next/cache';
 
 export type EmployeeRow = typeof employeesTable.$inferSelect;
 
-function hashPassword(password: string): string {
-  return createHash('sha256').update(password).digest('hex');
+function mapToEmployeeRow(emp: Employee): EmployeeRow {
+  return {
+    id: emp.id,
+    tenantId: emp.tenantId,
+    branchId: emp.branchId,
+    userId: emp.userId,
+    name: emp.name,
+    email: emp.email,
+    pinHash: emp.pinHash,
+    role: emp.role,
+    baseSalary: emp.baseSalary.toString(),
+    hourlyRate: emp.hourlyRate.toString(),
+    isActive: emp.isActive,
+    createdAt: emp.createdAt,
+    updatedAt: emp.updatedAt,
+  };
 }
 
-// ==========================================
-// TABLA EMPLOYEES (RRHH - sueldos, turnos)
-// ==========================================
-
-export async function fetchEmployees(): Promise<EmployeeRow[]> {
+/**
+ * Server Action Thin Controller: Lista los empleados activos del tenant/sucursal.
+ */
+export async function fetchEmployees(branchId?: string | null): Promise<EmployeeRow[]> {
   const session = await getCurrentUserSession();
 
-  const query = (session.role === 'ADMIN' || session.role === 'SUPER_ADMIN')
-    ? and(eq(employeesTable.tenantId, session.tenantId), eq(employeesTable.isActive, true))
-    : session.branchId
-      ? and(
-          eq(employeesTable.tenantId, session.tenantId),
-          eq(employeesTable.branchId, session.branchId),
-          eq(employeesTable.isActive, true)
-        )
-      : and(eq(employeesTable.tenantId, session.tenantId), eq(employeesTable.isActive, true));
+  const emps = await manageEmployeesUseCase.listEmployees({
+    tenantId: session.tenantId,
+    branchId: session.branchId,
+    userId: session.id,
+    role: session.role,
+    name: session.name,
+  }, branchId);
 
-  return db.select().from(employeesTable).where(query);
+  return emps.map(mapToEmployeeRow);
 }
 
+/**
+ * Server Action Thin Controller: Actualiza el salario y tarifa por hora de un empleado.
+ */
 export async function updateEmployeeSalary(
   employeeId: string,
   baseSalary: number,
@@ -40,29 +56,25 @@ export async function updateEmployeeSalary(
 ): Promise<EmployeeRow> {
   const session = await getCurrentUserSession();
 
-  if (session.role !== 'ADMIN' && session.role !== 'SUPERVISOR' && session.role !== 'SUPER_ADMIN') {
-    throw new Error('Sin permisos para modificar salarios.');
-  }
+  const updated = await manageEmployeesUseCase.updateSalary({
+    employeeId,
+    baseSalary,
+    hourlyRate,
+  }, {
+    tenantId: session.tenantId,
+    branchId: session.branchId,
+    userId: session.id,
+    role: session.role,
+    name: session.name,
+  });
 
-  const [updated] = await db.update(employeesTable)
-    .set({
-      baseSalary: baseSalary.toString(),
-      hourlyRate: hourlyRate.toString(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(employeesTable.id, employeeId),
-        eq(employeesTable.tenantId, session.tenantId)
-      )
-    )
-    .returning();
-
-  if (!updated) throw new Error('Empleado no encontrado.');
   revalidatePath('/admin');
-  return updated;
+  return mapToEmployeeRow(updated);
 }
 
+/**
+ * Server Action Thin Controller: Da de alta un empleado (datos de RRHH).
+ */
 export async function addEmployee(data: {
   name: string;
   email: string;
@@ -70,102 +82,74 @@ export async function addEmployee(data: {
   branchId?: string | null;
   baseSalary?: number;
   hourlyRate?: number;
+  pin?: string | null;
 }): Promise<EmployeeRow> {
   const session = await getCurrentUserSession();
 
-  if (session.role !== 'ADMIN' && session.role !== 'SUPER_ADMIN') {
-    throw new Error('Sin permisos para crear empleados.');
-  }
-
-  const [emp] = await db.insert(employeesTable).values({
-    tenantId: session.tenantId,
-    branchId: data.branchId ?? null,
+  const created = await manageEmployeesUseCase.addEmployee({
     name: data.name,
     email: data.email,
     role: data.role,
-    baseSalary: (data.baseSalary ?? 0).toString(),
-    hourlyRate: (data.hourlyRate ?? 0).toString(),
-    isActive: true,
-  }).returning();
+    branchId: data.branchId ?? null,
+    baseSalary: data.baseSalary ?? 0,
+    hourlyRate: data.hourlyRate ?? 0,
+    pin: data.pin ?? null,
+  }, {
+    tenantId: session.tenantId,
+    branchId: session.branchId,
+    userId: session.id,
+    role: session.role,
+    name: session.name,
+  });
 
   revalidatePath('/admin');
-  return emp;
+  return mapToEmployeeRow(created);
 }
 
-// ==========================================
-// TABLA USERS (autenticación)
-// ==========================================
-
-const EMPLOYEE_ROLES = {
-  cajero: 'CASHIER' as const,
-  panadero: 'BAKER' as const,
-  CASHIER: 'CASHIER' as const,
-  BAKER: 'BAKER' as const,
-};
-
+/**
+ * Server Action Thin Controller: Crea usuario de acceso y registro de empleado.
+ */
 export async function createEmployee(data: {
   name: string;
   email: string;
   password: string;
   role: 'cajero' | 'panadero' | 'CASHIER' | 'BAKER';
   branchId?: string | null;
-}) {
+  pin?: string | null;
+}): Promise<{
+  success: boolean;
+  data?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    createdAt: Date;
+  };
+  error?: string;
+}> {
   try {
     const session = await getCurrentUserSession();
 
-    if (session.role !== 'ADMIN' && session.role !== 'SUPER_ADMIN') {
-      return { success: false, error: 'Acceso denegado. Se requiere rol ADMIN o SUPER_ADMIN.' };
-    }
-
-    if (!data.name || !data.email || !data.password || !data.role) {
-      return { success: false, error: 'Todos los campos son requeridos.' };
-    }
-
-    const passwordHash = hashPassword(data.password);
-    const dbRole = EMPLOYEE_ROLES[data.role];
-
-    if (!dbRole) {
-      return { success: false, error: 'Rol de empleado no válido.' };
-    }
-
-    const assignedBranchId = data.branchId || null;
-
-    const [newUser] = await db.insert(users).values({
-      tenantId: session.tenantId,
-      branchId: assignedBranchId,
+    const res = await manageEmployeesUseCase.createEmployeeUser({
       name: data.name,
       email: data.email,
-      passwordHash: passwordHash,
-      role: dbRole,
-      isActive: true,
-    }).returning();
-
-    // Crear también el registro en la tabla employees
-    await db.insert(employeesTable).values({
+      password: data.password,
+      role: data.role,
+      branchId: data.branchId || null,
+      pin: data.pin || null,
+    }, {
       tenantId: session.tenantId,
-      branchId: assignedBranchId,
-      userId: newUser.id,
-      name: data.name,
-      email: data.email,
-      role: dbRole,
-      isActive: true,
+      branchId: session.branchId,
+      userId: session.id,
+      role: session.role,
+      name: session.name,
     });
 
     revalidatePath('/admin/usuarios');
     revalidatePath('/admin');
-    return {
-      success: true,
-      data: {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-        createdAt: newUser.createdAt,
-      }
-    };
-
+    return res;
   } catch (err: any) {
-    console.error('Error in createEmployee:', err);
+    console.error('[Action Error] createEmployee:', err);
     if (err.code === '23505' || err.message?.includes('users_email_unique')) {
       return { success: false, error: 'El correo electrónico ya está registrado.' };
     }
@@ -173,20 +157,81 @@ export async function createEmployee(data: {
   }
 }
 
+/**
+ * Server Action Thin Controller: Obtiene los usuarios del tenant.
+ */
 export async function getTenantEmployees() {
   const session = await getCurrentUserSession();
 
-  const result = await db.select()
-    .from(users)
-    .where(eq(users.tenantId, session.tenantId));
+  return manageEmployeesUseCase.listUsers({
+    tenantId: session.tenantId,
+    branchId: session.branchId,
+    userId: session.id,
+    role: session.role,
+    name: session.name,
+  });
+}
 
-  return result.map(e => ({
-    id: e.id,
-    tenantId: e.tenantId,
-    name: e.name,
-    email: e.email,
-    role: e.role,
-    isActive: e.isActive,
-    createdAt: e.createdAt,
-  }));
+/**
+ * Server Action Thin Controller: Asigna o cambia la sucursal que administra un usuario ADMIN (solo Dueño / Superadmin).
+ */
+export async function assignAdminBranchAction(
+  userId: string, 
+  branchId: string | null
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await getCurrentUserSession();
+
+    await manageEmployeesUseCase.assignAdminBranch(userId, branchId, {
+      tenantId: session.tenantId,
+      branchId: session.branchId,
+      userId: session.id,
+      role: session.role,
+      name: session.name,
+    });
+
+    revalidatePath('/admin/usuarios');
+    revalidatePath('/superadmin');
+    revalidatePath('/admin');
+    return { success: true };
+  } catch (err: any) {
+    console.error('[Action Error] assignAdminBranchAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Server Action Thin Controller: Registra una fichada de personal mediante PIN.
+ */
+export async function recordTimeClockAction(data: {
+  pin: string;
+  eventType: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
+  branchId?: string | null;
+  deviceInfo?: string | null;
+  notes?: string | null;
+}) {
+  try {
+    const session = await getCurrentUserSession();
+
+    const res = await recordTimeClockUseCase.execute({
+      pin: data.pin,
+      eventType: data.eventType,
+      branchId: data.branchId || session.branchId,
+      deviceInfo: data.deviceInfo || 'POS-Terminal',
+      notes: data.notes || null,
+    }, {
+      tenantId: session.tenantId,
+      branchId: session.branchId,
+      userId: session.id,
+      role: session.role,
+      name: session.name,
+    });
+
+    revalidatePath('/pos');
+    revalidatePath('/admin');
+    return { success: true, data: res };
+  } catch (err) {
+    console.error('[Action Error] recordTimeClockAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

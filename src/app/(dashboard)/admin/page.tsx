@@ -18,6 +18,7 @@ import { fetchShifts, assignShift, removeShift } from '@/actions/shifts';
 import { getTenantMetrics } from '@/actions/metrics';
 import { createAlert } from '@/actions/alerts';
 import { fetchBakeQueue } from '@/actions/bakeQueue';
+import { CreateBakeOrderModal } from '@/components/CreateBakeOrderModal';
 
 // Tipos
 import type { BranchRow } from '@/actions/branches';
@@ -53,7 +54,7 @@ const shiftTypes = [
 // ADMIN PAGE
 // ==========================================
 export default function AdminPage() {
-  const { currentSession, salesHistory, movementsHistory } = useStore();
+  const { currentUser, currentSession, salesHistory, movementsHistory } = useStore();
 
   const [activeTab, setActiveTab] = useState<'operaciones' | 'sucursales' | 'turnos' | 'empleados' | 'notificaciones'>('operaciones');
   const { toastMsg, triggerToast } = useToast();
@@ -79,6 +80,27 @@ export default function AdminPage() {
   const [newBranchName, setNewBranchName] = useState('');
   const [newBranchAddress, setNewBranchAddress] = useState('');
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
+  const [isBakeModalOpen, setIsBakeModalOpen] = useState(false);
+  const [selectedBranchIdForTurnos, setSelectedBranchIdForTurnos] = useState<string>('');
+
+  const selectedBranch = useMemo(() => {
+    return branches.find(b => b.id === selectedBranchIdForTurnos) || branches[0] || null;
+  }, [branches, selectedBranchIdForTurnos]);
+
+  const turnosEmployees = useMemo(() => {
+    if (!selectedBranchIdForTurnos) return employees;
+    return employees.filter(e => e.branchId === selectedBranchIdForTurnos);
+  }, [employees, selectedBranchIdForTurnos]);
+
+  const turnosShifts = useMemo(() => {
+    if (!selectedBranchIdForTurnos) return shifts;
+    return shifts.filter(s => s.branchId === selectedBranchIdForTurnos);
+  }, [shifts, selectedBranchIdForTurnos]);
+
+  const isOwnerOrSuperAdmin = 
+    currentUser?.role === 'SUPERVISOR' || 
+    currentUser?.role === 'SUPER_ADMIN' || 
+    (currentUser?.role as string) === 'OWNER';
 
   // Estado para notificaciones
   const [alertMessage, setAlertMessage] = useState('');
@@ -100,6 +122,9 @@ export default function AdminPage() {
         fetchBakeQueue(),
       ]);
       setBranches(branchList);
+      if (branchList.length > 0) {
+        setSelectedBranchIdForTurnos(prev => prev || branchList[0].id);
+      }
       setEmployees(empList);
       setShifts(shiftList as ShiftWithEmployee[]);
       setMetrics(metricsData);
@@ -185,7 +210,8 @@ export default function AdminPage() {
     e.preventDefault();
     if (!selectedEmployeeId) return;
     try {
-      await assignShift(selectedEmployeeId, selectedDay, selectedShiftType, selectedBranchIdForShift || null);
+      const branchToAssign = selectedBranchIdForTurnos || selectedBranchIdForShift || null;
+      await assignShift(selectedEmployeeId, selectedDay, selectedShiftType, branchToAssign);
       const emp = employees.find(e => e.id === selectedEmployeeId);
       triggerToast(`Turno asignado a ${emp?.name}`);
       setSelectedEmployeeId('');
@@ -443,9 +469,18 @@ export default function AdminPage() {
                       <p className="text-xs text-slate-400">Cola de horneado en cocina</p>
                     </div>
                   </div>
-                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${bakeQueueItems.length > 0 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>
-                    {bakeQueueItems.length} Órdenes
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsBakeModalOpen(true)}
+                      className="text-xs bg-orange-500 hover:bg-orange-600 text-white font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 shadow-xs transition-colors"
+                    >
+                      <Plus size={13} />
+                      <span>Nueva Orden</span>
+                    </button>
+                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${bakeQueueItems.length > 0 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {bakeQueueItems.length}
+                    </span>
+                  </div>
                 </div>
                 <div className="space-y-2 max-h-48 overflow-y-auto">
                   {bakeQueueItems.length === 0 ? (
@@ -526,45 +561,54 @@ export default function AdminPage() {
         {/* ==================== TAB: SUCURSALES ==================== */}
         {activeTab === 'sucursales' && (
           <motion.div key="sucursales" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-              {/* Formulario nueva sucursal */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 h-fit space-y-4">
-                <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                  <Plus className="text-orange-500" size={20} />
-                  <span>Nueva Sucursal</span>
-                </h3>
-                <form onSubmit={handleCreateBranch} className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Nombre</label>
-                    <input
-                      type="text"
-                      value={newBranchName}
-                      onChange={e => setNewBranchName(e.target.value)}
-                      placeholder="Ej: Sucursal Centro"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Dirección (opcional)</label>
-                    <input
-                      type="text"
-                      value={newBranchAddress}
-                      onChange={e => setNewBranchAddress(e.target.value)}
-                      placeholder="Ej: Av. Corrientes 1234"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
-                    />
-                  </div>
-                  <Button type="submit" disabled={isCreatingBranch} className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold flex items-center justify-center gap-2">
-                    <Plus size={16} />
-                    <span>{isCreatingBranch ? 'Creando...' : 'Crear Sucursal'}</span>
-                  </Button>
-                </form>
+            {!isOwnerOrSuperAdmin && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-amber-800 text-xs font-semibold">
+                <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                <span>La creación de sucursales está reservada exclusivamente para el Dueño o Superadmin. Como Administrador, tiene alcance operativo en las sucursales existentes.</span>
               </div>
+            )}
+
+            <div className={`grid grid-cols-1 ${isOwnerOrSuperAdmin ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-6`}>
+
+              {/* Formulario nueva sucursal (Solo visible para Dueño o Superadmin) */}
+              {isOwnerOrSuperAdmin && (
+                <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 h-fit space-y-4">
+                  <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <Plus className="text-orange-500" size={20} />
+                    <span>Nueva Sucursal</span>
+                  </h3>
+                  <form onSubmit={handleCreateBranch} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Nombre</label>
+                      <input
+                        type="text"
+                        value={newBranchName}
+                        onChange={e => setNewBranchName(e.target.value)}
+                        placeholder="Ej: Sucursal Centro"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Dirección (opcional)</label>
+                      <input
+                        type="text"
+                        value={newBranchAddress}
+                        onChange={e => setNewBranchAddress(e.target.value)}
+                        placeholder="Ej: Av. Corrientes 1234"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                      />
+                    </div>
+                    <Button type="submit" disabled={isCreatingBranch} className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold flex items-center justify-center gap-2">
+                      <Plus size={16} />
+                      <span>{isCreatingBranch ? 'Creando...' : 'Crear Sucursal'}</span>
+                    </Button>
+                  </form>
+                </div>
+              )}
 
               {/* Tabla de sucursales reales */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 lg:col-span-2 space-y-4">
+              <div className={`bg-white rounded-3xl p-6 shadow-sm border border-slate-100 ${isOwnerOrSuperAdmin ? 'lg:col-span-2' : 'w-full'} space-y-4`}>
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
                     <Building2 size={20} className="text-orange-500" />
@@ -623,14 +667,55 @@ export default function AdminPage() {
         {/* ==================== TAB: HORARIOS ==================== */}
         {activeTab === 'turnos' && (
           <motion.div key="turnos" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6">
+            
+            {/* Selector contextual de sucursales (Tabs horizontales / Slider) */}
+            <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-orange-100 text-orange-600 rounded-2xl">
+                  <MapPin size={20} />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-slate-800">Filtrar por Sucursal</h4>
+                  <p className="text-xs text-slate-400">Horarios y personal asignado para la sucursal seleccionada</p>
+                </div>
+              </div>
+
+              {branches.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
+                  {branches.map(b => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => setSelectedBranchIdForTurnos(b.id)}
+                      className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
+                        selectedBranchIdForTurnos === b.id
+                          ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                          : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'
+                      }`}
+                    >
+                      <Building2 size={14} />
+                      <span>{b.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
 
               {/* Formulario asignar turno */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 h-fit space-y-4">
-                <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                  <Clock className="text-orange-500" size={20} />
-                  <span>Asignar Turno</span>
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <Clock className="text-orange-500" size={20} />
+                    <span>Asignar Turno</span>
+                  </h3>
+                  {selectedBranch && (
+                    <span className="text-[10px] font-bold bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full truncate max-w-[120px]">
+                      {selectedBranch.name}
+                    </span>
+                  )}
+                </div>
                 <form onSubmit={handleAddShift} className="space-y-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-500 uppercase">Día</label>
@@ -645,24 +730,24 @@ export default function AdminPage() {
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Empleado</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">
+                      Empleado ({turnosEmployees.length} asignados)
+                    </label>
                     <select value={selectedEmployeeId} onChange={e => setSelectedEmployeeId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none" required>
-                      <option value="">Seleccionar empleado...</option>
-                      {employees.map(emp => (
+                      <option value="">
+                        {turnosEmployees.length === 0 ? 'Sin empleados en esta sucursal' : 'Seleccionar empleado...'}
+                      </option>
+                      {turnosEmployees.map(emp => (
                         <option key={emp.id} value={emp.id}>{emp.name} ({emp.role})</option>
                       ))}
                     </select>
                   </div>
-                  {branches.length > 0 && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Sucursal (opcional)</label>
-                      <select value={selectedBranchIdForShift} onChange={e => setSelectedBranchIdForShift(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none">
-                        <option value="">Sin sucursal específica</option>
-                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  <Button type="submit" className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold flex items-center justify-center gap-2">
+
+                  <Button 
+                    type="submit" 
+                    disabled={turnosEmployees.length === 0}
+                    className="w-full h-12 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-xl font-bold flex items-center justify-center gap-2"
+                  >
                     <Plus size={16} />
                     <span>Agregar al Cronograma</span>
                   </Button>
@@ -672,7 +757,12 @@ export default function AdminPage() {
               {/* Grilla semanal */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 lg:col-span-3 space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-800 text-lg">Organizador de Jornadas Semanales</h3>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Organizador de Jornadas Semanales</h3>
+                    {selectedBranch && (
+                      <p className="text-xs text-orange-600 font-semibold">Sucursal: {selectedBranch.name}</p>
+                    )}
+                  </div>
                   <span className="text-xs bg-slate-100 px-3 py-1.5 rounded-lg text-slate-500 font-medium">1 turno = 8 horas de trabajo</span>
                 </div>
                 <div className="overflow-x-auto border rounded-2xl border-slate-100">
@@ -690,7 +780,7 @@ export default function AdminPage() {
                           <span className="text-[10px] text-slate-400 font-normal mt-0.5">{st.id === 'morning' ? '6h a 14h' : st.id === 'afternoon' ? '14h a 22h' : '22h a 6h'}</span>
                         </div>
                         {daysOfWeek.map(day => {
-                          const cellShifts = shifts.filter(s => s.day === day && s.shiftType === st.id);
+                          const cellShifts = turnosShifts.filter(s => s.day === day && s.shiftType === st.id);
                           return (
                             <div key={day} className="p-2 min-h-[80px] flex flex-col gap-1.5 bg-white">
                               {cellShifts.length === 0 ? (
@@ -930,6 +1020,16 @@ export default function AdminPage() {
         )}
 
       </AnimatePresence>
+
+      {/* Modal de Creación Rápida de Órdenes de Horneado */}
+      <CreateBakeOrderModal
+        isOpen={isBakeModalOpen}
+        onClose={() => setIsBakeModalOpen(false)}
+        onSuccess={() => {
+          loadAllData();
+          triggerToast('¡Orden de horneado enviada a cocina con éxito!');
+        }}
+      />
     </div>
   );
 }

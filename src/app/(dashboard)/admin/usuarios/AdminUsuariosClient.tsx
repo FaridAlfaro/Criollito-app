@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createEmployee } from '@/actions/employees';
+import { createEmployee, assignAdminBranchAction } from '@/actions/employees';
 import { fetchBranches } from '@/actions/branches';
+import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import {
   UserPlus, UserCheck, Mail, Lock, Plus,
@@ -13,6 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 interface Employee {
   id: string;
   tenantId: string;
+  branchId?: string | null;
   name: string;
   email: string;
   role: 'SUPER_ADMIN' | 'ADMIN' | 'SUPERVISOR' | 'BAKER' | 'CASHIER';
@@ -47,6 +49,32 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+
+  const { currentUser } = useStore();
+  const isOwnerOrSuperAdmin = 
+    currentUser?.role === 'SUPERVISOR' || 
+    currentUser?.role === 'SUPER_ADMIN' || 
+    (currentUser?.role as string) === 'OWNER';
+
+  const handleAssignBranch = async (userId: string, newBranchId: string | null) => {
+    setUpdatingUserId(userId);
+    setError(null);
+    try {
+      const res = await assignAdminBranchAction(userId, newBranchId);
+      if (!res.success) {
+        setError(res.error || 'Error al asignar sucursal');
+        return;
+      }
+      setEmployeesList(prev => prev.map(e => e.id === userId ? { ...e, branchId: newBranchId } : e));
+      setSuccessMsg('Sucursal asignada al Administrador con éxito ✓');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setError(err.message || 'Error inesperado al asignar sucursal');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
 
   useEffect(() => {
     async function loadBranches() {
@@ -323,6 +351,7 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
                     <th className="pb-3 pl-4">Empleado</th>
                     <th className="pb-3">Email</th>
                     <th className="pb-3 text-center">Rol</th>
+                    <th className="pb-3 text-left">Sucursal Asignada</th>
                     <th className="pb-3 text-center">Estado</th>
                     <th className="pb-3 text-right pr-4">Alta</th>
                   </tr>
@@ -342,6 +371,36 @@ export default function AdminUsuariosClient({ initialEmployees, tenantName }: Ad
                         }`}>
                           {translateRole(emp.role)}
                         </span>
+                      </td>
+                      <td className="py-4 text-left">
+                        {emp.role === 'ADMIN' ? (
+                          isOwnerOrSuperAdmin ? (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={emp.branchId || ''}
+                                disabled={updatingUserId === emp.id}
+                                onChange={(e) => handleAssignBranch(emp.id, e.target.value || null)}
+                                className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                              >
+                                <option value="">Todas / Sin asignar</option>
+                                {branches.map(b => (
+                                  <option key={b.id} value={b.id}>{b.name}</option>
+                                ))}
+                              </select>
+                              {updatingUserId === emp.id && (
+                                <RefreshCw size={12} className="animate-spin text-orange-500" />
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs font-semibold text-slate-600">
+                              {branches.find(b => b.id === emp.branchId)?.name || 'Alcance Global'}
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-xs text-slate-500">
+                            {branches.find(b => b.id === emp.branchId)?.name || '—'}
+                          </span>
+                        )}
                       </td>
                       <td className="py-4 text-center">
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
