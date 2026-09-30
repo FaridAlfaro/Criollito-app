@@ -49,9 +49,16 @@ export async function loginAction(email: string, password: string) {
     });
 
     return { success: true, user: sessionData };
-  } catch (error) {
-    console.error('[AUTH_DEBUG] Error detallado en loginAction:', error);
-    throw error;
+  } catch (error: any) {
+    console.error("[AUTH_RUNTIME_ERROR] Fallo en autenticación:", {
+      message: error?.message,
+      code: error?.code,
+      stack: error?.stack,
+    });
+
+    return {
+      error: "Error de conexión. Intente nuevamente.",
+    };
   }
 }
 
